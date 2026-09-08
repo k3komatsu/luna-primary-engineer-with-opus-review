@@ -2,9 +2,9 @@
 set -euo pipefail
 
 CODEX_DIR="${CODEX_HOME:-${HOME}/.codex}"
-SKILL="${HOME}/.agents/skills/luna-orchestrator/SKILL.md"
-ROOT_PONYTAIL="${HOME}/.agents/skills/luna-orchestrator/references/ponytail/SKILL.md"
-PRIVATE_PONYTAIL="${CODEX_DIR}/luna-orchestrator/deps/ponytail/skills/ponytail/SKILL.md"
+SKILL="${HOME}/.agents/skills/luna-primary-engineer/SKILL.md"
+ROOT_PONYTAIL="${HOME}/.agents/skills/luna-primary-engineer/references/ponytail/SKILL.md"
+PRIVATE_PONYTAIL="${CODEX_DIR}/luna-primary-engineer/deps/ponytail/skills/ponytail/SKILL.md"
 AGENTS="${CODEX_DIR}/agents"
 FAIL=0
 
@@ -16,9 +16,9 @@ check_file "$SKILL"
 check_file "$ROOT_PONYTAIL"
 check_file "$PRIVATE_PONYTAIL"
 for f in claude-common.sh claude-job.sh claude-review.sh claude-panel.sh self-test.sh; do
-  check_file "${HOME}/.agents/skills/luna-orchestrator/scripts/$f"
+  check_file "${HOME}/.agents/skills/luna-primary-engineer/scripts/$f"
 done
-if [[ -f "${HOME}/.agents/skills/luna-orchestrator/scripts/self-test.sh" ]] && bash "${HOME}/.agents/skills/luna-orchestrator/scripts/self-test.sh" >/dev/null 2>&1; then
+if [[ -f "${HOME}/.agents/skills/luna-primary-engineer/scripts/self-test.sh" ]] && bash "${HOME}/.agents/skills/luna-primary-engineer/scripts/self-test.sh" >/dev/null 2>&1; then
   echo "OK   Claude helper self-test"
 else
   echo "FAIL Claude helper self-test"; FAIL=1
@@ -78,7 +78,7 @@ if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then echo "WARN ANTHROPIC_API_KEY is set; 
 if [[ "${DISABLE_PROMPT_CACHING:-0}" == "1" || "${DISABLE_PROMPT_CACHING_OPUS:-0}" == "1" ]]; then
   echo "WARN Opus prompt caching is disabled; seed-and-fork still works functionally but loses its main cache-cost benefit"
 fi
-if [[ -n "${LUNA_ORCH_CLAUDE_MAX_TURNS_REVIEW:-}" || -n "${LUNA_ORCH_CLAUDE_MAX_TURNS_PANEL:-}" ]]; then
+if [[ -n "${LUNA_PRIMARY_ENGINEER_CLAUDE_MAX_TURNS_REVIEW:-}" || -n "${LUNA_PRIMARY_ENGINEER_CLAUDE_MAX_TURNS_PANEL:-}" ]]; then
   echo "INFO legacy max-turn environment variables are set but v6.6 ignores them because background mode does not use print-mode turn caps"
 fi
 if [[ -f "${HOME}/.config/ponytail/config.json" ]] && grep -Eqi '"defaultMode"[[:space:]]*:[[:space:]]*"(lite|full|ultra)"' "${HOME}/.config/ponytail/config.json"; then

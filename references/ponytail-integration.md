@@ -19,13 +19,13 @@ Ponytail means: minimize **implementation**, never the requested requirement or 
 The installer maintains a private Ponytail checkout at:
 
 ```text
-${CODEX_HOME:-~/.codex}/luna-orchestrator/deps/ponytail/
+${CODEX_HOME:-~/.codex}/luna-primary-engineer/deps/ponytail/
 ```
 
 and copies its `SKILL.md` into:
 
 ```text
-~/.agents/skills/luna-orchestrator/references/ponytail/SKILL.md
+~/.agents/skills/luna-primary-engineer/references/ponytail/SKILL.md
 ```
 
 The Primary reads/applies it explicitly before substantive implementation.
@@ -36,4 +36,4 @@ The Primary reads/applies it explicitly before substantive implementation.
 
 ## Global Ponytail warning
 
-A globally injected Ponytail plugin can contaminate roles that are deliberately meant to be independent. For strict v6.6 behavior, use this package's private integration rather than global injection during Luna Orchestrator sessions.
+A globally injected Ponytail plugin can contaminate roles that are deliberately meant to be independent. For strict v6.6 behavior, use this package's private integration rather than global injection during Luna Primary Engineer sessions.

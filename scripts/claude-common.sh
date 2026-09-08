@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Shared helpers for Luna Orchestrator v6.6 Claude Code background integration.
+# Shared helpers for Luna Primary Engineer v6.6 Claude Code background integration.
 
-luna_orch_claude_mode() {
-  printf '%s' "${LUNA_ORCH_CLAUDE:-auto}"
+luna_primary_engineer_claude_mode() {
+  printf '%s' "${LUNA_PRIMARY_ENGINEER_CLAUDE:-auto}"
 }
 
-luna_orch_claude_available() {
+luna_primary_engineer_claude_available() {
   local mode
-  mode="$(luna_orch_claude_mode)"
+  mode="$(luna_primary_engineer_claude_mode)"
   [[ "$mode" != "off" ]] || return 1
   command -v claude >/dev/null 2>&1 || return 1
   if [[ "$mode" == "on" ]]; then
@@ -16,13 +16,13 @@ luna_orch_claude_available() {
   claude auth status >/dev/null 2>&1
 }
 
-luna_orch_warn_billing() {
+luna_primary_engineer_warn_billing() {
   if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
     echo "WARN: ANTHROPIC_API_KEY is set; Claude Code may be using API-billed authentication." >&2
   fi
 }
 
-luna_orch_require_fresh_state_dir() {
+luna_primary_engineer_require_fresh_state_dir() {
   local state_dir="$1"
   if [[ -e "$state_dir/job_id" || -e "$state_dir/session_id" || -e "$state_dir/launch.txt" || -e "$state_dir/launch_exit_code" ]]; then
     echo "ERROR: state directory already contains Claude identity/launch evidence: $state_dir. Use a new state directory, or use status/collect/resume for the existing review." >&2
@@ -30,7 +30,7 @@ luna_orch_require_fresh_state_dir() {
   fi
 }
 
-luna_orch_require_fresh_state_tree() {
+luna_primary_engineer_require_fresh_state_tree() {
   local root="$1" marker
   [[ -d "$root" ]] || return 0
   marker="$(find "$root" -type f \( -name job_id -o -name session_id -o -name launch.txt -o -name launch_exit_code \) -print -quit 2>/dev/null || true)"
@@ -40,7 +40,7 @@ luna_orch_require_fresh_state_tree() {
   fi
 }
 
-luna_orch_runtime_dir() {
+luna_primary_engineer_runtime_dir() {
   local codex_dir repo_key stamp
   codex_dir="${CODEX_HOME:-${HOME}/.codex}"
   if command -v shasum >/dev/null 2>&1; then
@@ -51,12 +51,12 @@ luna_orch_runtime_dir() {
     repo_key="repo"
   fi
   stamp="$(date '+%Y%m%d-%H%M%S')"
-  printf '%s/luna-orchestrator/runtime/%s/%s' "$codex_dir" "$repo_key" "$stamp"
+  printf '%s/luna-primary-engineer/runtime/%s/%s' "$codex_dir" "$repo_key" "$stamp"
 }
 
 # Parse the short background job/session ID printed by `claude --bg`.
 # Current Claude Code prints e.g. `backgrounded · 7c5dcf5d · name`.
-luna_orch_extract_bg_id() {
+luna_primary_engineer_extract_bg_id() {
   local file="$1" id
   id="$(sed -n 's/.*backgrounded[^0-9a-fA-F]*\([0-9a-fA-F]\{8\}\).*/\1/p' "$file" | head -n 1)"
   if [[ -z "$id" ]]; then
@@ -68,7 +68,7 @@ luna_orch_extract_bg_id() {
 
 # Print: state<TAB>status for one background ID from `claude agents --json --all`.
 # Uses jq, Python, Node, or JXA (macOS) in that order.
-luna_orch_bg_record_from_json() {
+luna_primary_engineer_bg_record_from_json() {
   local json_file="$1" wanted="$2"
   [[ -n "$wanted" ]] || return 1
   if command -v jq >/dev/null 2>&1; then
@@ -134,15 +134,15 @@ JXA
 }
 
 # Query one background job. Prints state<TAB>status. If the job is absent, prints unknown.
-luna_orch_bg_record() {
+luna_primary_engineer_bg_record() {
   local id="$1" tmp rec
-  tmp="$(mktemp "${TMPDIR:-/tmp}/luna-orch-agents.XXXXXX")"
+  tmp="$(mktemp "${TMPDIR:-/tmp}/luna-primary-engineer-agents.XXXXXX")"
   if ! claude agents --json --all >"$tmp" 2>/dev/null; then
     rm -f "$tmp"
     echo "ERROR: 'claude agents --json --all' failed." >&2
     return 2
   fi
-  rec="$(luna_orch_bg_record_from_json "$tmp" "$id")"
+  rec="$(luna_primary_engineer_bg_record_from_json "$tmp" "$id")"
   rm -f "$tmp"
   if [[ -z "$rec" ]]; then
     printf 'unknown\t\n'
@@ -156,7 +156,7 @@ luna_orch_bg_record() {
 # `claude agents --json --all` exposes both a short background `id` (for
 # attach/logs/stop) and a full `sessionId` (for `claude --resume`). Keep them
 # distinct: v6.6 uses sessionId for sticky same-conversation follow-ups.
-luna_orch_bg_session_id_from_json() {
+luna_primary_engineer_bg_session_id_from_json() {
   local json_file="$1" wanted="$2"
   [[ -n "$wanted" ]] || return 1
   if command -v jq >/dev/null 2>&1; then
@@ -216,15 +216,15 @@ JXA2
   return 2
 }
 
-luna_orch_bg_session_id() {
+luna_primary_engineer_bg_session_id() {
   local id="$1" tmp sid
-  tmp="$(mktemp "${TMPDIR:-/tmp}/luna-orch-agents.XXXXXX")"
+  tmp="$(mktemp "${TMPDIR:-/tmp}/luna-primary-engineer-agents.XXXXXX")"
   if ! claude agents --json --all >"$tmp" 2>/dev/null; then
     rm -f "$tmp"
     echo "ERROR: 'claude agents --json --all' failed." >&2
     return 2
   fi
-  sid="$(luna_orch_bg_session_id_from_json "$tmp" "$id")"
+  sid="$(luna_primary_engineer_bg_session_id_from_json "$tmp" "$id")"
   rm -f "$tmp"
   [[ -n "$sid" ]] || return 1
   printf '%s' "$sid"
@@ -232,11 +232,11 @@ luna_orch_bg_session_id() {
 
 # Save a background job's conversation sessionId into a state directory when
 # available. Safe to call repeatedly.
-luna_orch_store_session_id() {
+luna_primary_engineer_store_session_id() {
   local state_dir="$1" id sid
   [[ -f "$state_dir/job_id" ]] || return 1
   id="$(cat "$state_dir/job_id")"
-  sid="$(luna_orch_bg_session_id "$id" 2>/dev/null || true)"
+  sid="$(luna_primary_engineer_bg_session_id "$id" 2>/dev/null || true)"
   if [[ -n "$sid" ]]; then
     printf '%s\n' "$sid" > "$state_dir/session_id"
     printf '%s' "$sid"
@@ -245,18 +245,18 @@ luna_orch_store_session_id() {
   return 1
 }
 
-luna_orch_bg_state() {
+luna_primary_engineer_bg_state() {
   local id="$1" rec
-  rec="$(luna_orch_bg_record "$id")" || return
+  rec="$(luna_primary_engineer_bg_record "$id")" || return
   printf '%s' "${rec%%$'\t'*}"
 }
 
-luna_orch_bg_logs() {
+luna_primary_engineer_bg_logs() {
   local id="$1" out="$2"
   claude logs "$id" >"$out"
 }
 
-luna_orch_review_contract_complete() {
+luna_primary_engineer_review_contract_complete() {
   local file="$1" heading
   [[ -f "$file" ]] || return 1
   for heading in VERDICT BLOCKERS NONBLOCKING TEST_GAPS PREVIOUS_FINDINGS; do
@@ -272,7 +272,7 @@ luna_orch_review_contract_complete() {
 #  13 stopped
 #  14 unknown/not listed
 #  18 completed output is missing the review contract
-luna_orch_bg_state_code() {
+luna_primary_engineer_bg_state_code() {
   case "$1" in
     done|completed) return 0 ;;
     working|idle) return 10 ;;
@@ -283,16 +283,16 @@ luna_orch_bg_state_code() {
   esac
 }
 
-luna_orch_print_state_dir() {
+luna_primary_engineer_print_state_dir() {
   local state_dir="$1" id rec state status
   [[ -f "$state_dir/job_id" ]] || { echo "ERROR: missing $state_dir/job_id" >&2; return 2; }
   id="$(cat "$state_dir/job_id")"
-  rec="$(luna_orch_bg_record "$id")" || return
+  rec="$(luna_primary_engineer_bg_record "$id")" || return
   state="${rec%%$'\t'*}"
   status="${rec#*$'\t'}"
   local sid
   sid="$(cat "$state_dir/session_id" 2>/dev/null || true)"
-  if [[ -z "$sid" ]]; then sid="$(luna_orch_bg_session_id "$id" 2>/dev/null || true)"; fi
+  if [[ -z "$sid" ]]; then sid="$(luna_primary_engineer_bg_session_id "$id" 2>/dev/null || true)"; fi
   printf 'JOB_ID=%s\nSESSION_ID=%s\nSTATE=%s\nSTATUS=%s\nSTATE_DIR=%s\n' "$id" "$sid" "$state" "$status" "$state_dir"
-  luna_orch_bg_state_code "$state"
+  luna_primary_engineer_bg_state_code "$state"
 }

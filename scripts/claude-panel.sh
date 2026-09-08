@@ -35,15 +35,15 @@ TXT
 MODE="$1"; shift
 
 require_claude() {
-  if ! luna_orch_claude_available; then
-    echo "ERROR: Claude Code is unavailable, unauthenticated, or disabled (LUNA_ORCH_CLAUDE=off)." >&2
+  if ! luna_primary_engineer_claude_available; then
+    echo "ERROR: Claude Code is unavailable, unauthenticated, or disabled (LUNA_PRIMARY_ENGINEER_CLAUDE=off)." >&2
     exit 3
   fi
-  luna_orch_warn_billing
+  luna_primary_engineer_warn_billing
 }
 
-MODEL="${LUNA_ORCH_CLAUDE_MODEL:-opus}"
-EFFORT="${LUNA_ORCH_CLAUDE_PANEL_EFFORT:-max}"
+MODEL="${LUNA_PRIMARY_ENGINEER_CLAUDE_MODEL:-opus}"
+EFFORT="${LUNA_PRIMARY_ENGINEER_CLAUDE_PANEL_EFFORT:-max}"
 SYSTEM_PROMPT="$ROOT_DIR/references/claude/panel-system.md"
 base_args=(
   --model "$MODEL"
@@ -67,7 +67,7 @@ launch_and_store() {
   set -e
   printf '%s\n' "$rc" > "$state_dir/launch_exit_code"
   if (( rc != 0 )); then cat "$launch" >&2; return "$rc"; fi
-  id="$(luna_orch_extract_bg_id "$launch" || true)"
+  id="$(luna_primary_engineer_extract_bg_id "$launch" || true)"
   if [[ -z "$id" ]]; then
     echo "ERROR: could not parse Claude background ID from $launch" >&2
     cat "$launch" >&2
@@ -75,7 +75,7 @@ launch_and_store() {
   fi
   printf '%s\n' "$id" > "$state_dir/job_id"
   printf '%s\n' "$add_dir" > "$state_dir/panel_root"
-  if [[ ! -f "$state_dir/session_id" ]]; then luna_orch_store_session_id "$state_dir" >/dev/null 2>&1 || true; fi
+  if [[ ! -f "$state_dir/session_id" ]]; then luna_primary_engineer_store_session_id "$state_dir" >/dev/null 2>&1 || true; fi
   printf 'JOB_ID=%s\nSESSION_ID=%s\nSTATE_DIR=%s\n' "$id" "$(cat "$state_dir/session_id" 2>/dev/null || true)" "$state_dir"
 }
 
@@ -83,7 +83,7 @@ case "$MODE" in
   start)
     require_claude
     [[ $# -ge 2 && $# -le 3 ]] || { usage >&2; exit 2; }
-    CONTEXT="$1"; ROLES_DIR="$2"; OUTPUT="${3:-$(luna_orch_runtime_dir)-panel}"
+    CONTEXT="$1"; ROLES_DIR="$2"; OUTPUT="${3:-$(luna_primary_engineer_runtime_dir)-panel}"
     [[ -f "$CONTEXT" ]] || { echo "ERROR: context not found: $CONTEXT" >&2; exit 2; }
     [[ -d "$ROLES_DIR" ]] || { echo "ERROR: roles directory not found: $ROLES_DIR" >&2; exit 2; }
     shopt -s nullglob
@@ -91,7 +91,7 @@ case "$MODE" in
     COUNT=${#ROLES[@]}
     (( COUNT >= 2 )) || { echo "ERROR: panel requires at least 2 role files; got $COUNT" >&2; exit 2; }
     (( COUNT <= 6 )) || { echo "ERROR: panel hard limit is 6 role files; got $COUNT" >&2; exit 2; }
-    luna_orch_require_fresh_state_tree "$OUTPUT" || exit $?
+    luna_primary_engineer_require_fresh_state_tree "$OUTPUT" || exit $?
 
     mkdir -p "$OUTPUT/seed" "$OUTPUT/roles"
     cp "$CONTEXT" "$OUTPUT/context.md"
@@ -108,7 +108,7 @@ case "$MODE" in
     done
     OUT_ABS="$(cd "$OUTPUT" && pwd)"
     launch_and_store "$OUTPUT/seed" "$OUTPUT" "luna-panel-seed" \
-      "LUNA_ORCH_SHARED_SEED_MODE. Read the shared factual context at: $OUT_ABS/context.md . Load it into the conversation. Do not diagnose, rank hypotheses, recommend a design, or propose a fix. Do not ask questions. Reply exactly SEED_READY when loaded."
+      "LUNA_PRIMARY_ENGINEER_SHARED_SEED_MODE. Read the shared factual context at: $OUT_ABS/context.md . Load it into the conversation. Do not diagnose, rank hypotheses, recommend a design, or propose a fix. Do not ask questions. Reply exactly SEED_READY when loaded."
     echo "NEXT=after seed is done, run: claude-panel.sh advance $OUTPUT"
     ;;
 
@@ -119,13 +119,13 @@ case "$MODE" in
     [[ -f "$OUTPUT/seed/job_id" ]] || { echo "ERROR: invalid panel directory: $OUTPUT" >&2; exit 2; }
     echo "STAGE=$(cat "$OUTPUT/stage" 2>/dev/null || echo unknown)"
     echo "[seed]"
-    luna_orch_print_state_dir "$OUTPUT/seed" || true
+    luna_primary_engineer_print_state_dir "$OUTPUT/seed" || true
     if [[ -f "$OUTPUT/role-names.txt" ]]; then
       while IFS= read -r stem; do
         [[ -n "$stem" ]] || continue
         if [[ -f "$OUTPUT/$stem/job_id" ]]; then
           echo "[$stem]"
-          luna_orch_print_state_dir "$OUTPUT/$stem" || true
+          luna_primary_engineer_print_state_dir "$OUTPUT/$stem" || true
         fi
       done < "$OUTPUT/role-names.txt"
     fi
@@ -153,7 +153,7 @@ case "$MODE" in
     fi
 
     SEED_ID="$(cat "$OUTPUT/seed/job_id")"
-    SEED_STATE="$(luna_orch_bg_state "$SEED_ID")"
+    SEED_STATE="$(luna_primary_engineer_bg_state "$SEED_ID")"
     case "$SEED_STATE" in
       done|completed) ;;
       working|idle) echo "NOT_READY: seed $SEED_ID is $SEED_STATE. Do not duplicate it." >&2; exit 10 ;;
@@ -162,8 +162,8 @@ case "$MODE" in
       stopped) echo "STOPPED: seed $SEED_ID." >&2; exit 13 ;;
       *) echo "UNKNOWN seed state for $SEED_ID" >&2; exit 14 ;;
     esac
-    luna_orch_bg_logs "$SEED_ID" "$OUTPUT/seed/result.txt" || true
-    SEED_SESSION_ID="$(luna_orch_bg_session_id "$SEED_ID" 2>/dev/null || true)"
+    luna_primary_engineer_bg_logs "$SEED_ID" "$OUTPUT/seed/result.txt" || true
+    SEED_SESSION_ID="$(luna_primary_engineer_bg_session_id "$SEED_ID" 2>/dev/null || true)"
     [[ -n "$SEED_SESSION_ID" ]] || { echo "ERROR: could not resolve full sessionId for panel seed job $SEED_ID." >&2; exit 16; }
     printf '%s\n' "$SEED_SESSION_ID" > "$OUTPUT/seed/session_id"
     OUT_ABS="$(cd "$OUTPUT" && pwd)"
@@ -172,7 +172,7 @@ case "$MODE" in
       D="$OUTPUT/$stem"
       ROLE_ABS="$OUT_ABS/roles/$stem.md"
       launch_and_store "$D" "$OUTPUT" "luna-panel-$stem" \
-        "You are one independent branch forked from the neutral shared-context seed. Read your assigned role at: $ROLE_ABS . Analyze the inherited shared context strictly from that role. Do not seek consensus with hypothetical peers. Do not ask the orchestrator questions; state uncertainty and finish. Return the compact panel artifact from your system instructions." \
+        "You are one independent branch forked from the neutral shared-context seed. Read your assigned role at: $ROLE_ABS . Analyze the inherited shared context strictly from that role. Do not seek consensus with hypothetical peers. Do not ask the Primary Engineer questions; state uncertainty and finish. Return the compact panel artifact from your system instructions." \
         --resume "$SEED_SESSION_ID" --fork-session >/dev/null
       printf '%s\n' "$SEED_ID" > "$D/parent_job_id"
       printf '%s\n' "$SEED_SESSION_ID" > "$D/parent_session_id"
@@ -192,11 +192,11 @@ case "$MODE" in
       [[ -n "$stem" ]] || continue
       D="$OUTPUT/$stem"
       [[ -f "$D/job_id" ]] || { echo "ERROR: branch $stem not launched; run advance after seed completes." >&2; exit 2; }
-      ID="$(cat "$D/job_id")"; REC="$(luna_orch_bg_record "$ID")"; STATE="${REC%%$'\t'*}"; STATUS="${REC#*$'\t'}"
+      ID="$(cat "$D/job_id")"; REC="$(luna_primary_engineer_bg_record "$ID")"; STATE="${REC%%$'\t'*}"; STATUS="${REC#*$'\t'}"
       case "$STATE" in
         done|completed)
-          if [[ ! -f "$D/session_id" ]]; then luna_orch_store_session_id "$D" >/dev/null 2>&1 || true; fi
-          luna_orch_bg_logs "$ID" "$D/result.txt"
+          if [[ ! -f "$D/session_id" ]]; then luna_primary_engineer_store_session_id "$D" >/dev/null 2>&1 || true; fi
+          luna_primary_engineer_bg_logs "$ID" "$D/result.txt"
           [[ -f "$D/initial-result.txt" ]] || cp "$D/result.txt" "$D/initial-result.txt"
           printf '%s\t%s\t%s\t%s\n' "$stem" "$STATE" "$ID" "$D/result.txt" >> "$OUTPUT/manifest.tsv"
           ;;
@@ -224,13 +224,13 @@ case "$MODE" in
     [[ -f "$BRANCH/job_id" ]] || { echo "ERROR: missing $BRANCH/job_id" >&2; exit 2; }
     [[ -f "$DELTA" ]] || { echo "ERROR: delta not found: $DELTA" >&2; exit 2; }
     JOB_ID="$(cat "$BRANCH/job_id")"
-    STATE="$(luna_orch_bg_state "$JOB_ID")"
+    STATE="$(luna_primary_engineer_bg_state "$JOB_ID")"
     if [[ "$STATE" != "done" && "$STATE" != "completed" ]]; then
       echo "ERROR: expert job $JOB_ID is '$STATE'. Never resume a working or blocked advisor." >&2
       exit 10
     fi
     SESSION_ID="$(cat "$BRANCH/session_id" 2>/dev/null || true)"
-    if [[ -z "$SESSION_ID" ]]; then SESSION_ID="$(luna_orch_bg_session_id "$JOB_ID" 2>/dev/null || true)"; fi
+    if [[ -z "$SESSION_ID" ]]; then SESSION_ID="$(luna_primary_engineer_bg_session_id "$JOB_ID" 2>/dev/null || true)"; fi
     [[ -n "$SESSION_ID" ]] || { echo "ERROR: could not resolve conversation sessionId for expert job $JOB_ID." >&2; exit 16; }
     printf '%s\n' "$SESSION_ID" > "$BRANCH/session_id"
     ROOT="$(cat "$BRANCH/panel_root" 2>/dev/null || dirname "$BRANCH")"
@@ -248,7 +248,7 @@ case "$MODE" in
       "Continue the SAME expert conversation for the same decision domain. Read the new delta/question at: $CHILD_ABS/followup.md . Use your existing context, answer only the new unresolved point, do not ask questions, and finish with the compact panel artifact." \
       --resume "$SESSION_ID"
     NEW_JOB_ID="$(cat "$BRANCH/job_id")"
-    ACTUAL_SESSION_ID="$(luna_orch_bg_session_id "$NEW_JOB_ID" 2>/dev/null || true)"
+    ACTUAL_SESSION_ID="$(luna_primary_engineer_bg_session_id "$NEW_JOB_ID" 2>/dev/null || true)"
     if [[ -n "$ACTUAL_SESSION_ID" && "$ACTUAL_SESSION_ID" != "$SESSION_ID" ]]; then
       echo "ERROR: sticky advisor follow-up unexpectedly changed conversation sessionId ($ACTUAL_SESSION_ID != $SESSION_ID)." >&2
       exit 17

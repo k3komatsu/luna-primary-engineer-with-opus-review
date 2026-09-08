@@ -2,8 +2,8 @@
 set -euo pipefail
 
 CODEX_DIR="${CODEX_HOME:-${HOME}/.codex}"
-PONYTAIL_DEST="${CODEX_DIR}/luna-orchestrator/deps/ponytail"
-SKILL_DEST="${HOME}/.agents/skills/luna-orchestrator"
+PONYTAIL_DEST="${CODEX_DIR}/luna-primary-engineer/deps/ponytail"
+SKILL_DEST="${HOME}/.agents/skills/luna-primary-engineer"
 PONYTAIL_SKILL="$PONYTAIL_DEST/skills/ponytail/SKILL.md"
 
 if [[ ! -d "$PONYTAIL_DEST/.git" ]]; then

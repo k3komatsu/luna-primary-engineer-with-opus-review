@@ -46,15 +46,15 @@ TXT
 MODE="$1"; shift
 
 require_claude() {
-  if ! luna_orch_claude_available; then
-    echo "ERROR: Claude Code is unavailable, unauthenticated, or disabled (LUNA_ORCH_CLAUDE=off)." >&2
+  if ! luna_primary_engineer_claude_available; then
+    echo "ERROR: Claude Code is unavailable, unauthenticated, or disabled (LUNA_PRIMARY_ENGINEER_CLAUDE=off)." >&2
     exit 3
   fi
-  luna_orch_warn_billing
+  luna_primary_engineer_warn_billing
 }
 
-MODEL="${LUNA_ORCH_CLAUDE_MODEL:-opus}"
-EFFORT="${LUNA_ORCH_CLAUDE_REVIEW_EFFORT:-xhigh}"
+MODEL="${LUNA_PRIMARY_ENGINEER_CLAUDE_MODEL:-opus}"
+EFFORT="${LUNA_PRIMARY_ENGINEER_CLAUDE_REVIEW_EFFORT:-xhigh}"
 SYSTEM_PROMPT="$ROOT_DIR/references/claude/reviewer-system.md"
 
 # IMPORTANT: these flags are the same for neutral seed and reviewer forks.
@@ -84,7 +84,7 @@ launch_bg() {
     cat "$launch" >&2
     return "$rc"
   fi
-  id="$(luna_orch_extract_bg_id "$launch" || true)"
+  id="$(luna_primary_engineer_extract_bg_id "$launch" || true)"
   if [[ -z "$id" ]]; then
     echo "ERROR: could not parse Claude background ID from $launch" >&2
     cat "$launch" >&2
@@ -92,7 +92,7 @@ launch_bg() {
   fi
   printf '%s\n' "$id" > "$state_dir/job_id"
   printf '%s\n' "$PWD" > "$state_dir/cwd"
-  if [[ ! -f "$state_dir/session_id" ]]; then luna_orch_store_session_id "$state_dir" >/dev/null 2>&1 || true; fi
+  if [[ ! -f "$state_dir/session_id" ]]; then luna_primary_engineer_store_session_id "$state_dir" >/dev/null 2>&1 || true; fi
   printf 'JOB_ID=%s\nSESSION_ID=%s\nSTATE_DIR=%s\n' "$id" "$(cat "$state_dir/session_id" 2>/dev/null || true)" "$state_dir"
 }
 
@@ -101,34 +101,34 @@ review_status() {
   if [[ -f "$state_dir/job_id" && -f "$state_dir/session_id" ]]; then
     id="$(cat "$state_dir/job_id")"
     expected="$(cat "$state_dir/session_id")"
-    actual="$(luna_orch_bg_session_id "$id" 2>/dev/null || true)"
+    actual="$(luna_primary_engineer_bg_session_id "$id" 2>/dev/null || true)"
     if [[ -n "$actual" && "$actual" != "$expected" ]]; then
       echo "ERROR: reviewer background job $id belongs to sessionId $actual, expected sticky sessionId $expected." >&2
       return 17
     fi
   fi
-  luna_orch_print_state_dir "$state_dir"
+  luna_primary_engineer_print_state_dir "$state_dir"
 }
 
 review_collect() {
   local state_dir="$1" id rec state status out
   [[ -f "$state_dir/job_id" ]] || { echo "ERROR: missing $state_dir/job_id" >&2; return 2; }
   id="$(cat "$state_dir/job_id")"
-  rec="$(luna_orch_bg_record "$id")"
+  rec="$(luna_primary_engineer_bg_record "$id")"
   state="${rec%%$'\t'*}"
   status="${rec#*$'\t'}"
   out="$state_dir/result.txt"
   case "$state" in
     done|completed)
-      if [[ ! -f "$state_dir/session_id" ]]; then luna_orch_store_session_id "$state_dir" >/dev/null 2>&1 || true; fi
+      if [[ ! -f "$state_dir/session_id" ]]; then luna_primary_engineer_store_session_id "$state_dir" >/dev/null 2>&1 || true; fi
       expected_sid="$(cat "$state_dir/session_id" 2>/dev/null || true)"
-      actual_sid="$(luna_orch_bg_session_id "$id" 2>/dev/null || true)"
+      actual_sid="$(luna_primary_engineer_bg_session_id "$id" 2>/dev/null || true)"
       if [[ -n "$expected_sid" && -n "$actual_sid" && "$actual_sid" != "$expected_sid" ]]; then
         echo "ERROR: reviewer job $id is attached to unexpected sessionId $actual_sid (expected $expected_sid)." >&2
         return 17
       fi
-      luna_orch_bg_logs "$id" "$out"
-      if ! luna_orch_review_contract_complete "$out"; then
+      luna_primary_engineer_bg_logs "$id" "$out"
+      if ! luna_primary_engineer_review_contract_complete "$out"; then
         echo "ERROR: reviewer $id reached state=done but its log lacks the complete review contract; inspect $out before any resume/retry." >&2
         return 18
       fi
@@ -173,17 +173,17 @@ case "$MODE" in
     require_claude
     [[ $# -ge 1 && $# -le 3 ]] || { usage >&2; exit 2; }
     PACKET="$1"
-    STATE_DIR="${2:-$(luna_orch_runtime_dir)-review}"
+    STATE_DIR="${2:-$(luna_primary_engineer_runtime_dir)-review}"
     LABEL="${3:-reviewer-1}"
     [[ -f "$PACKET" ]] || { echo "ERROR: packet not found: $PACKET" >&2; exit 2; }
-    luna_orch_require_fresh_state_dir "$STATE_DIR" || exit $?
+    luna_primary_engineer_require_fresh_state_dir "$STATE_DIR" || exit $?
     mkdir -p "$STATE_DIR"
     cp "$PACKET" "$STATE_DIR/review-packet.md"
     printf '%s\n' "$LABEL" > "$STATE_DIR/label"
     printf 'single-review\n' > "$STATE_DIR/kind"
     PACKET_ABS="$(cd "$STATE_DIR" && pwd)/review-packet.md"
-    launch_bg "$STATE_DIR" "luna-orch-$LABEL" \
-      "This is a single-turn background review. Do not stop in plan mode or wait for approval. Independently review the coherent change. First read the review packet at: $PACKET_ABS . Inspect repository files only as needed. Do not ask the orchestrator questions; if evidence is incomplete, record the uncertainty in the review and finish. Return the review contract from your system instructions."
+    launch_bg "$STATE_DIR" "luna-primary-engineer-$LABEL" \
+      "This is a single-turn background review. Do not stop in plan mode or wait for approval. Independently review the coherent change. First read the review packet at: $PACKET_ABS . Inspect repository files only as needed. Do not ask the Primary Engineer questions; if evidence is incomplete, record the uncertainty in the review and finish. Return the review contract from your system instructions."
     ;;
 
   status)
@@ -206,7 +206,7 @@ case "$MODE" in
     [[ -f "$DELTA" ]] || { echo "ERROR: delta not found: $DELTA" >&2; exit 2; }
 
     JOB_ID="$(cat "$STATE_DIR/job_id")"
-    STATE="$(luna_orch_bg_state "$JOB_ID")"
+    STATE="$(luna_primary_engineer_bg_state "$JOB_ID")"
     if [[ "$STATE" != "done" && "$STATE" != "completed" ]]; then
       echo "ERROR: reviewer job $JOB_ID is '$STATE'. Never resume a working or blocked reviewer." >&2
       exit 10
@@ -214,7 +214,7 @@ case "$MODE" in
 
     SESSION_ID="$(cat "$STATE_DIR/session_id" 2>/dev/null || true)"
     if [[ -z "$SESSION_ID" ]]; then
-      SESSION_ID="$(luna_orch_bg_session_id "$JOB_ID" 2>/dev/null || true)"
+      SESSION_ID="$(luna_primary_engineer_bg_session_id "$JOB_ID" 2>/dev/null || true)"
     fi
     [[ -n "$SESSION_ID" ]] || {
       echo "ERROR: could not resolve Claude conversation sessionId for reviewer job $JOB_ID; refusing to create a new reviewer implicitly." >&2
@@ -237,14 +237,14 @@ case "$MODE" in
     # Sticky reviewer: the previous background run is already done, so resume
     # the SAME Claude conversation. Do not use --fork-session here. Forks are
     # reserved for intentionally independent reviewers/panel branches.
-    launch_bg "$STATE_DIR" "luna-orch-rereview" \
+    launch_bg "$STATE_DIR" "luna-primary-engineer-rereview" \
       "Continue the SAME review conversation. Read the Primary's fix delta and verification evidence at: $DELTA_ABS . Re-check your previous findings, mark each relevant finding OPEN or CLOSED, inspect regressions introduced by the fixes, and return the same concise review contract. Do not broaden scope unless the fix reveals a new blocker. Do not ask questions; finish with the evidence available." \
       --resume "$SESSION_ID"
 
     # `--resume` without `--fork-session` must keep the same conversation ID.
     # The short background job ID may change across supervised runs, which is OK.
     NEW_JOB_ID="$(cat "$STATE_DIR/job_id")"
-    NEW_SESSION_ID="$(luna_orch_bg_session_id "$NEW_JOB_ID" 2>/dev/null || true)"
+    NEW_SESSION_ID="$(luna_primary_engineer_bg_session_id "$NEW_JOB_ID" 2>/dev/null || true)"
     if [[ -n "$NEW_SESSION_ID" && "$NEW_SESSION_ID" != "$SESSION_ID" ]]; then
       echo "ERROR: Claude returned a different conversation sessionId on sticky re-review ($NEW_SESSION_ID != $SESSION_ID). Stop and inspect; do not silently accept a fresh reviewer." >&2
       exit 17
@@ -257,9 +257,9 @@ case "$MODE" in
     require_claude
     [[ $# -ge 1 && $# -le 2 ]] || { usage >&2; exit 2; }
     PACKET="$1"
-    GROUP="${2:-$(luna_orch_runtime_dir)-dual-review}"
+    GROUP="${2:-$(luna_primary_engineer_runtime_dir)-dual-review}"
     [[ -f "$PACKET" ]] || { echo "ERROR: packet not found: $PACKET" >&2; exit 2; }
-    luna_orch_require_fresh_state_tree "$GROUP" || exit $?
+    luna_primary_engineer_require_fresh_state_tree "$GROUP" || exit $?
     mkdir -p "$GROUP/seed" "$GROUP/reviewer-1" "$GROUP/reviewer-2"
     cp "$PACKET" "$GROUP/review-packet.md"
     printf '%s\n' "$PWD" > "$GROUP/cwd"
@@ -271,12 +271,12 @@ case "$MODE" in
     LAUNCH="$GROUP/seed/launch.txt"
     set +e
     claude --bg "${base_args[@]}" --add-dir "$GROUP" --name "luna-review-seed" \
-      "LUNA_ORCH_SHARED_SEED_MODE. This is a single-turn background load; do not stop for plan approval. Read the review packet at: $PACKET_ABS . Load it as shared factual context only. Do not evaluate correctness, identify defects, rank risks, or propose fixes. Do not ask questions. Reply exactly SEED_READY when loaded." >"$LAUNCH" 2>&1
+      "LUNA_PRIMARY_ENGINEER_SHARED_SEED_MODE. This is a single-turn background load; do not stop for plan approval. Read the review packet at: $PACKET_ABS . Load it as shared factual context only. Do not evaluate correctness, identify defects, rank risks, or propose fixes. Do not ask questions. Reply exactly SEED_READY when loaded." >"$LAUNCH" 2>&1
     RC=$?
     set -e
     printf '%s\n' "$RC" > "$GROUP/seed/launch_exit_code"
     if (( RC != 0 )); then cat "$LAUNCH" >&2; exit "$RC"; fi
-    ID="$(luna_orch_extract_bg_id "$LAUNCH" || true)"
+    ID="$(luna_primary_engineer_extract_bg_id "$LAUNCH" || true)"
     [[ -n "$ID" ]] || { echo "ERROR: could not parse seed background ID" >&2; cat "$LAUNCH" >&2; exit 4; }
     printf '%s\n' "$ID" > "$GROUP/seed/job_id"
     printf 'SEED_JOB_ID=%s\nGROUP_DIR=%s\nNEXT=run dual-advance after seed state is done\n' "$ID" "$GROUP"
@@ -289,11 +289,11 @@ case "$MODE" in
     [[ -f "$GROUP/seed/job_id" ]] || { echo "ERROR: invalid dual group: $GROUP" >&2; exit 2; }
     echo "STAGE=$(cat "$GROUP/stage" 2>/dev/null || echo unknown)"
     echo "[seed]"
-    luna_orch_print_state_dir "$GROUP/seed" || true
+    luna_primary_engineer_print_state_dir "$GROUP/seed" || true
     for n in 1 2; do
       if [[ -f "$GROUP/reviewer-$n/job_id" ]]; then
         echo "[reviewer-$n]"
-        luna_orch_print_state_dir "$GROUP/reviewer-$n" || true
+        luna_primary_engineer_print_state_dir "$GROUP/reviewer-$n" || true
       fi
     done
     ;;
@@ -308,7 +308,7 @@ case "$MODE" in
       exit 0
     fi
     SEED_ID="$(cat "$GROUP/seed/job_id")"
-    SEED_STATE="$(luna_orch_bg_state "$SEED_ID")"
+    SEED_STATE="$(luna_primary_engineer_bg_state "$SEED_ID")"
     case "$SEED_STATE" in
       done|completed) ;;
       working|idle) echo "NOT_READY: seed $SEED_ID is $SEED_STATE. Do not duplicate it." >&2; exit 10 ;;
@@ -317,21 +317,21 @@ case "$MODE" in
       stopped) echo "STOPPED: seed $SEED_ID." >&2; exit 13 ;;
       *) echo "UNKNOWN seed state for $SEED_ID" >&2; exit 14 ;;
     esac
-    luna_orch_bg_logs "$SEED_ID" "$GROUP/seed/result.txt" || true
-    SEED_SESSION_ID="$(luna_orch_bg_session_id "$SEED_ID" 2>/dev/null || true)"
+    luna_primary_engineer_bg_logs "$SEED_ID" "$GROUP/seed/result.txt" || true
+    SEED_SESSION_ID="$(luna_primary_engineer_bg_session_id "$SEED_ID" 2>/dev/null || true)"
     [[ -n "$SEED_SESSION_ID" ]] || { echo "ERROR: could not resolve full sessionId for review seed job $SEED_ID." >&2; exit 16; }
     printf '%s\n' "$SEED_SESSION_ID" > "$GROUP/seed/session_id"
     for n in 1 2; do
       D="$GROUP/reviewer-$n"; LAUNCH="$D/launch.txt"
       set +e
       claude --bg "${base_args[@]}" --add-dir "$GROUP" \
-        --resume "$SEED_SESSION_ID" --fork-session --name "luna-orch-reviewer-$n" \
-        "You are Reviewer $n, an independent blind branch forked from the neutral review seed. This is a single-turn background review; do not stop for plan approval. Review the inherited coherent change now. Never seek or infer the other reviewer's opinion. Inspect repository files only as needed. Do not ask the orchestrator questions; record uncertainty and finish. Return the review contract from your system instructions." >"$LAUNCH" 2>&1
+        --resume "$SEED_SESSION_ID" --fork-session --name "luna-primary-engineer-reviewer-$n" \
+        "You are Reviewer $n, an independent blind branch forked from the neutral review seed. This is a single-turn background review; do not stop for plan approval. Review the inherited coherent change now. Never seek or infer the other reviewer's opinion. Inspect repository files only as needed. Do not ask the Primary Engineer questions; record uncertainty and finish. Return the review contract from your system instructions." >"$LAUNCH" 2>&1
       RC=$?
       set -e
       printf '%s\n' "$RC" > "$D/launch_exit_code"
       if (( RC != 0 )); then cat "$LAUNCH" >&2; exit "$RC"; fi
-      ID="$(luna_orch_extract_bg_id "$LAUNCH" || true)"
+      ID="$(luna_primary_engineer_extract_bg_id "$LAUNCH" || true)"
       [[ -n "$ID" ]] || { echo "ERROR: could not parse reviewer-$n background ID" >&2; cat "$LAUNCH" >&2; exit 4; }
       printf '%s\n' "$ID" > "$D/job_id"
       printf '%s\n' "$SEED_ID" > "$D/parent_job_id"
@@ -351,12 +351,12 @@ case "$MODE" in
     FAIL=0
     printf 'reviewer\tstate\tjob_id\tresult\n' > "$GROUP/manifest.tsv"
     for n in 1 2; do
-      D="$GROUP/reviewer-$n"; ID="$(cat "$D/job_id")"; REC="$(luna_orch_bg_record "$ID")"; STATE="${REC%%$'\t'*}"; STATUS="${REC#*$'\t'}"
+      D="$GROUP/reviewer-$n"; ID="$(cat "$D/job_id")"; REC="$(luna_primary_engineer_bg_record "$ID")"; STATE="${REC%%$'\t'*}"; STATUS="${REC#*$'\t'}"
       case "$STATE" in
         done|completed)
-          luna_orch_store_session_id "$D" >/dev/null 2>&1 || true
-          luna_orch_bg_logs "$ID" "$D/result.txt"
-          if ! luna_orch_review_contract_complete "$D/result.txt"; then
+          luna_primary_engineer_store_session_id "$D" >/dev/null 2>&1 || true
+          luna_primary_engineer_bg_logs "$ID" "$D/result.txt"
+          if ! luna_primary_engineer_review_contract_complete "$D/result.txt"; then
             echo "INCOMPLETE: reviewer-$n $ID reached state=done but its log lacks the complete review contract." >&2
             FAIL=18
             continue

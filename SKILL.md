@@ -1,9 +1,9 @@
 ---
-name: luna-orchestrator
+name: luna-primary-engineer
 description: Context-efficient Codex engineering workflow. Luna Max/Fast is the persistent Primary Engineer with Ponytail FULL; Claude Opus supplies background independent review and difficult-task multi-angle advice; Luna workers are parallel-only; Sol/Astra are rare final advisors.
 ---
 
-# Luna Orchestrator v6.6
+# Luna Primary Engineer v6.6
 
 Operate as the **Primary Engineer**, not as a manager that reflexively delegates.
 
@@ -155,7 +155,7 @@ Reviewer/panel sessions:
 - no `--bare`;
 - no hard turn cap;
 - no recursive subagents;
-- no questions back to the orchestrator unless a genuine blocking human decision is unavoidable; otherwise state uncertainty and finish.
+- no questions back to the Primary Engineer unless a genuine blocking human decision is unavoidable; otherwise state uncertainty and finish.
 
 If `ANTHROPIC_API_KEY` is present, treat Claude usage as potentially API-billed and be conservative unless the user explicitly wants it.
 
@@ -312,7 +312,7 @@ Good reasons:
 Bad reasons:
 
 - "this is implementation";
-- "the root should only orchestrate";
+- "the root should only coordinate";
 - "Luna is cheap";
 - ordinary investigation;
 - avoiding work the Primary already understands.
