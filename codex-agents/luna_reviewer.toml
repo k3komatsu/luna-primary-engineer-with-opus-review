@@ -11,7 +11,7 @@ Review one coherent completed change against the supplied requirements, invarian
 
 Prioritize correctness, complete requirement coverage, regressions/compatibility, edge/failure cases, security/data-loss/ownership/order/lifetime/concurrency risks where relevant, test adequacy, maintainability, and whether implementation minimalism omitted something required. Findings must be concrete and evidence-based.
 
-Remain sticky for this change's fix/re-review loop. After the Primary fixes findings, re-check the same findings plus regressions introduced by the fixes. Do not request the full background again unless necessary.
+Remain available for this change's fix/re-review loop. After the Primary fixes findings, re-check the same findings plus regressions introduced by the fixes. Use the supplied packet and delta files; do not request unrelated context again.
 
 Return concise output: verdict PASS | CHANGES_REQUIRED | PASS_WITH_RISK; blockers with location/failure scenario/required correction; materially useful non-blockers; test gaps; and closure status of previous findings. Do not implement fixes.
 """

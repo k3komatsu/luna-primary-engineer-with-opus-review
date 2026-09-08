@@ -1,64 +1,49 @@
-# Agent and external-session lifecycle v6.6
+# Agent and Claude lifecycle
 
 ## Primary
 
-The root Luna Max/Fast session is the long-lived Primary Engineer and default owner of investigation, implementation, tests, fixes, integration, expert routing, and user communication.
+The root Luna Max/Fast session owns investigation, implementation, tests,
+review routing, integration, and user communication.
 
-## Claude background-state rule
-
-Every long Claude reviewer/advisor job is supervised by Claude Code, not by one Codex shell call.
-
-```text
-status=idle    -> activity substate only; inspect lifecycle state
-state=working  -> leave alone
-state=blocked  -> inspect, do not duplicate/resume; attach only for explicit read-only continuation
-state=done     -> collect; same session may resume, or fork if independence is intended
-failed/stopped -> inspect cause before retry
-```
-
-A Codex shell timeout/yield is not a Claude lifecycle event.
-The `Worked ... · done` footer in logs is turn completion, not necessarily
-lifecycle completion; it may appear while `status=idle,state=working`.
-
-## Claude Opus review sessions
-
-Ordinary review:
+## Claude review
 
 ```text
-FRESH REVIEWER --bg -> WORKING -> DONE -> FINDINGS
-FINDINGS -> PRIMARY_FIX -> RESUME SAME REVIEWER SESSION --bg
-RE-REVIEW -> DONE -> FIX AGAIN? -> RESUME SAME SESSION
-PASS/ACCEPTED -> ARCHIVE STATE
+FOREGROUND REVIEW -> DONE -> FINDINGS
+FINDINGS -> PRIMARY_FIX -> FRESH FOREGROUND RE-REVIEW
+RE-REVIEW -> DONE -> FIX AGAIN? -> FRESH RE-REVIEW
+PASS/ACCEPTED -> ARCHIVE RESULT FILES
 ```
 
-The Reviewer conversation is sticky until acceptance. Background job IDs may change between runs; conversation `sessionId` must not.
+The process exit code and stored result files are the only completion signals.
+There is no job registry or conversation lifecycle to resume.
 
-High-risk dual review:
+## High-risk dual review
 
 ```text
-NEUTRAL SEED --bg -> DONE
-DONE -> FORK REVIEWER 1 --bg + FORK REVIEWER 2 --bg
-REVIEWERS -> DONE -> INDEPENDENT FINDINGS -> LUNA SYNTHESIS
-R1 FINDING -> PRIMARY_FIX -> RESUME SAME R1 SESSION
-R2 FINDING -> PRIMARY_FIX -> RESUME SAME R2 SESSION
+FOREGROUND NEUTRAL SEED -> DONE
+DONE -> FOREGROUND REVIEWER 1 -> DONE
+     -> FOREGROUND REVIEWER 2 -> DONE
+REVIEWERS -> INDEPENDENT FINDINGS -> LUNA SYNTHESIS
 ```
 
-Do not create a new reviewer merely because an existing reviewer is slow. The neutral seed is never itself a reviewer and never contains a verdict.
+Reviewer calls are sequential and independent. The neutral seed contains facts,
+not a verdict.
 
-## Claude Opus panel sessions
+## Claude panel
 
 ```text
-NEUTRAL SEED --bg -> DONE
-DONE -> FORK A/B/C/D --bg -> DONE -> INDEPENDENT ANALYSES -> LUNA SYNTHESIS
+FOREGROUND NEUTRAL SEED -> DONE
+DONE -> FOREGROUND ROLE A/B/C/D -> DONE
+ROLE RESULTS -> LUNA SYNTHESIS
 ```
 
-Each panel member is an independent fork from the same neutral seed and cannot see peers. If one completed fork becomes a useful domain specialist, **resume that same expert conversation** for same-scope follow-ups.
-
-Never concurrently resume/fork a live Claude conversation.
+Each role receives the shared context and its own role file. A follow-up reads
+the previous branch result and a new delta in a fresh foreground call.
 
 ## luna_reviewer
 
-Fallback reviewer when Claude is unavailable or intentionally disabled. Sticky through the current change's fix/re-review loop, then close.
+Fallback reviewer when Claude is unavailable or intentionally disabled. It
+reviews the same change and fix evidence without editing files.
 
 ## luna_worker
 
@@ -68,8 +53,10 @@ INTEGRATION/REVIEW -> FIX_REQUESTED -> IMPLEMENTING
 INTEGRATION/REVIEW -> ACCEPTED -> CLOSED
 ```
 
-Parallel-only. `REPORTED` is not terminal. Keep the same Worker through review of its owned contribution when practical.
+Parallel-only. A report is not terminal until the contribution is integrated
+and accepted.
 
 ## Sol / Astra
 
-Domain-scoped sticky advisors. Reuse for semantically continuous follow-ups. Sol gets only the narrow unresolved point after cheaper Luna/Opus evidence gathering where practical. Astra is exceptional final escalation.
+Domain-scoped advisors for narrow unresolved questions. Sol is preferred for a
+material remaining judgment; Astra is exceptional final escalation.

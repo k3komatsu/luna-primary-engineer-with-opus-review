@@ -1,128 +1,59 @@
-# Opus Advisory Panel — v6.6
+# Opus advisory panel
 
-Use a panel only when the difficult part is **reasoning**, not routine implementation.
-
-The Primary Luna remains the router and evidence synthesizer. Opus branches are independent read-only specialists.
+Use a panel only when the difficult part is reasoning, not routine
+implementation. Luna remains the router and evidence synthesizer.
 
 ## Architecture
 
 ```text
-Luna creates common factual packet + low-correlation roles
+Luna creates factual context + role files
                     |
-                    v
-          neutral Opus seed --bg
+          foreground neutral seed
                     |
-                state=done
+       foreground Analyst / Skeptic / Specialist
                     |
-       +------------+------------+
-       |            |            |
-   fork --bg    fork --bg    fork --bg ...
-   Analyst      Skeptic       Specialist
-       \            |            /
-        \-----------+-----------/
-                    v
-             Luna synthesis
+                Luna synthesis
 ```
 
-The neutral seed exists for shared context and prompt-cache lineage. It must not diagnose or recommend.
+The seed must load facts only and return `SEED_READY`. Each role is an
+independent foreground call that reads the shared context and its assigned role.
+Role calls run sequentially to avoid concurrent Claude instability.
 
 ## Role generation
 
-Choose roles that attack different failure modes. Do not send the same question N times with cosmetic wording changes.
+Choose roles that attack different failure modes, for example:
 
-Examples:
-
-### Debugging
 - causal/root-cause analyst;
 - falsifier of the leading hypothesis;
 - ownership/concurrency/lifecycle specialist;
-- overlooked-state/alternative-mechanism hunter.
+- overlooked-state or alternative-mechanism hunter.
 
-### Architecture
-- best-design advocate under constraints;
-- adversarial critic;
-- alternative-architecture designer;
-- invariant/API/compatibility specialist.
-
-### Mathematics / algorithms
-- proof/derivation constructor;
-- counterexample hunter;
-- theorem-assumption mapper;
-- independent alternative derivation.
-
-## Shared seed packet
-
-Create `context.md` containing stable facts:
-
-```text
-Goal / decision needed:
-Observed facts:
-Relevant code/equations/API:
-Constraints and invariants:
-Evidence/tests/measurements:
-What Luna already tried:
-Current hypotheses/options (factually described, not endorsed):
-Exact unresolved question:
-```
-
-Prefer common relevant excerpts/evidence in the packet. Do not let the seed choose hypothesis-dependent evidence that would bias every branch.
+Keep the hard maximum at six roles unless the user explicitly requests more.
 
 ## Commands
 
-Start the neutral seed and return immediately:
-
 ```bash
 claude-panel.sh start CONTEXT_FILE ROLES_DIR OUTPUT_DIR
-```
-
-Check at a natural work boundary:
-
-```bash
 claude-panel.sh status OUTPUT_DIR
-```
-
-Only when the seed is `done`:
-
-```bash
 claude-panel.sh advance OUTPUT_DIR
-```
-
-This dispatches all independent forked experts as Claude background jobs. Later:
-
-```bash
 claude-panel.sh collect OUTPUT_DIR
+claude-panel.sh followup BRANCH_DIR DELTA_FILE
 ```
 
-`collect` succeeds only when all branches have lifecycle `state=done`.
-`status=idle` is not completion, and a `Worked ... · done` log footer can still
-mean that the session is lifecycle-open. `working` is not failure and never
-triggers replacement.
+`start` waits for the neutral seed. `advance` waits for each role in order.
+`collect` prints stored role results. `followup` reads the prior branch result
+and the new delta in a fresh foreground call.
 
 ## Synthesis
 
-The Primary reads all branch results and produces its own synthesis. Do **not** use majority vote. A single expert with a decisive counterexample can outweigh several agreeing but weaker analyses.
-
-Synthesize:
+Luna should record:
 
 1. claims shared across experts;
 2. true disagreements;
 3. evidence each conclusion depends on;
-4. strongest counterexample/failure mode;
-5. what repository evidence can cheaply adjudicate disagreement;
-6. final Primary decision and confidence.
+4. strongest counterexample or failure mode;
+5. cheap repository evidence that can adjudicate disagreement;
+6. final decision and confidence.
 
-## Adaptive second wave
-
-If Wave 1 leaves one exact dispute, add only 1-2 targeted independent branches rather than another broad swarm. Hard maximum remains 6 unless the user explicitly requests more.
-
-## Sticky advisor continuation
-
-If one completed expert branch is uniquely useful and the same decision domain continues:
-
-```bash
-claude-panel.sh followup BRANCH_DIR DELTA_FILE
-```
-
-v6.6 resumes **that same expert conversation sessionId** without `--fork-session`. This preserves the specialist's accumulated domain context and avoids paying to rebuild it. A new fork is appropriate only when you deliberately want an independent perspective.
-
-Never follow up a `working` or `blocked` branch. Never promote the neutral seed itself.
+Do not use majority vote. One decisive counterexample can outweigh several
+weaker agreeing analyses.

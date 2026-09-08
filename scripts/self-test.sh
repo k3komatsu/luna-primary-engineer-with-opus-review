@@ -5,35 +5,40 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=claude-common.sh
 source "$SCRIPT_DIR/claude-common.sh"
 
-JSON_FILE="$(mktemp "${TMPDIR:-/tmp}/luna-primary-engineer-self-test.XXXXXX")"
-CONTRACT_FILE="$(mktemp "${TMPDIR:-/tmp}/luna-primary-engineer-self-contract.XXXXXX")"
 STATE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/luna-primary-engineer-self-state.XXXXXX")"
 cleanup() {
-  rm -f "$JSON_FILE" "$CONTRACT_FILE" "$STATE_DIR/launch.txt"
-  rmdir "$STATE_DIR" 2>/dev/null || true
+  rm -rf "$STATE_DIR"
 }
 trap cleanup EXIT
 
-printf '%s\n' '[{"state":"working","status":"idle","sessionId":"wrong-session"},{"id":"abc12345","state":"done","status":"idle","sessionId":"actual-session"}]' > "$JSON_FILE"
-
-[[ "$(luna_primary_engineer_bg_record_from_json "$JSON_FILE" abc12345)" == $'done\tidle' ]]
-[[ "$(luna_primary_engineer_bg_session_id_from_json "$JSON_FILE" abc12345)" == "actual-session" ]]
-[[ -z "$(luna_primary_engineer_bg_session_id_from_json "$JSON_FILE" deadbeef)" ]]
-[[ -z "$(luna_primary_engineer_bg_session_id_from_json "$JSON_FILE" "")" ]]
-
+CONTRACT_FILE="$STATE_DIR/contract.txt"
 printf '%s\n' 'VERDICT: PASS' 'BLOCKERS:' 'NONBLOCKING:' 'TEST_GAPS:' 'PREVIOUS_FINDINGS:' > "$CONTRACT_FILE"
 luna_primary_engineer_review_contract_complete "$CONTRACT_FILE"
+
 printf '%s\n' 'VERDICT: PASS' > "$CONTRACT_FILE"
 if luna_primary_engineer_review_contract_complete "$CONTRACT_FILE"; then
   echo "FAIL: incomplete review contract was accepted" >&2
   exit 1
 fi
 
+rm -f "$CONTRACT_FILE"
 luna_primary_engineer_require_fresh_state_dir "$STATE_DIR"
-touch "$STATE_DIR/launch.txt"
+touch "$STATE_DIR/result.txt"
 if luna_primary_engineer_require_fresh_state_dir "$STATE_DIR" 2>/dev/null; then
-  echo "FAIL: launch evidence was not rejected" >&2
+  echo "FAIL: completed result was not rejected as a reused state directory" >&2
   exit 1
 fi
 
-echo "PASS: Claude ID matching and fresh-state guards"
+rm -f "$STATE_DIR/result.txt"
+touch "$STATE_DIR/job_id"
+if luna_primary_engineer_require_fresh_state_dir "$STATE_DIR" 2>/dev/null; then
+  echo "FAIL: legacy asynchronous state was not rejected" >&2
+  exit 1
+fi
+
+rm -f "$STATE_DIR/job_id"
+printf 'done\n' > "$STATE_DIR/stage"
+printf '0\n' > "$STATE_DIR/run_exit_code"
+luna_primary_engineer_print_state_dir "$STATE_DIR" >/dev/null
+
+echo "PASS: foreground result, contract, and fresh-state guards"

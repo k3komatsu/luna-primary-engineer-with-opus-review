@@ -65,11 +65,10 @@ if command -v claude >/dev/null 2>&1; then
     echo "WARN Claude Code installed but auth status failed; fallback Luna review will be used in auto mode"
   fi
   HELP="$(claude --help 2>&1 || true)"
-  if grep -q -- '--bg' <<<"$HELP"; then echo "OK   Claude Code supports --bg"; else echo "WARN Claude Code --bg not found; update Claude Code for v6.6 background review"; fi
-  if grep -q -- '--fork-session' <<<"$HELP"; then echo "OK   Claude Code supports --fork-session"; else echo "WARN Claude Code --fork-session not found; update Claude Code for v6.6 seed/independent-review forks"; fi
+  if grep -q -- '--print' <<<"$HELP"; then echo "OK   Claude Code supports foreground --print"; else echo "WARN Claude Code --print not found; foreground review cannot run"; FAIL=1; fi
   if grep -q -- '--permission-prompts' <<<"$HELP"; then echo "OK   Claude Code supports --permission-prompts"; else echo "WARN Claude Code lacks --permission-prompts; read-only reviews may pause for approval"; fi
   if grep -q -- 'dontAsk' <<<"$HELP"; then echo "OK   Claude Code supports dontAsk permission mode"; else echo "WARN Claude Code lacks dontAsk permission mode; read-only reviews may enter plan mode"; fi
-  if claude agents --help >/dev/null 2>&1; then echo "OK   Claude agent-view commands available"; else echo "WARN 'claude agents' unavailable; v6.6 background state tracking will not work"; fi
+  if grep -q -- '--no-session-persistence' <<<"$HELP"; then echo "OK   Claude Code supports non-persistent foreground sessions"; else echo "WARN Claude Code lacks --no-session-persistence; foreground runs may leave session state"; fi
 else
   echo "WARN Claude Code not installed; fallback Luna review will be used"
 fi
@@ -79,7 +78,7 @@ if [[ "${DISABLE_PROMPT_CACHING:-0}" == "1" || "${DISABLE_PROMPT_CACHING_OPUS:-0
   echo "WARN Opus prompt caching is disabled; seed-and-fork still works functionally but loses its main cache-cost benefit"
 fi
 if [[ -n "${LUNA_PRIMARY_ENGINEER_CLAUDE_MAX_TURNS_REVIEW:-}" || -n "${LUNA_PRIMARY_ENGINEER_CLAUDE_MAX_TURNS_PANEL:-}" ]]; then
-  echo "INFO legacy max-turn environment variables are set but v6.6 ignores them because background mode does not use print-mode turn caps"
+  echo "INFO legacy max-turn environment variables are set but the foreground helpers do not use them"
 fi
 if [[ -f "${HOME}/.config/ponytail/config.json" ]] && grep -Eqi '"defaultMode"[[:space:]]*:[[:space:]]*"(lite|full|ultra)"' "${HOME}/.config/ponytail/config.json"; then
   echo "WARN global Ponytail default appears active; it may reduce reviewer/advisor independence"
@@ -88,7 +87,7 @@ fi
 if [[ "$(uname -s 2>/dev/null || true)" == "Darwin" ]]; then
   case "$PWD/" in
     "$HOME/Desktop/"*|"$HOME/Documents/"*|"$HOME/Downloads/"*)
-      echo "WARN current repository is under a macOS privacy-sensitive folder; Claude background sessions may be unable to read it"
+      echo "WARN current repository is under a macOS privacy-sensitive folder; Claude foreground sessions may be unable to read it"
       ;;
   esac
 fi

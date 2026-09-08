@@ -1,18 +1,17 @@
 Luna Primary Engineer v6.6
 - Primary: Luna Max/Fast + Ponytail FULL
-- Ordinary review: one fresh Claude Opus background reviewer, xhigh effort, read-only, no --bare, no long synchronous -p wait
-- Short claude -p: bounded one-turn stdout/exit-code questions only; no background lifecycle, collect, or sticky resume
-- Background state discipline: status=idle is not completion; only lifecycle state=done is collect/resume/follow-up eligible
-- Turn/lifecycle distinction: `Worked ... · done` in logs can coexist with an open state=working session
-- Sticky re-review: Reviewer conversation sessionId is reused until PASS; no --fork-session for ordinary re-review
-- ID discipline: short background job ID is separate from full Claude conversation sessionId; v6.6 rejects empty-id matches and stores/verifies both
-- Permission discipline: dontAsk + permission-prompts none + Read/Glob/Grep + explicit MCP deny for reviewer/panel sessions
-- Verification: `bash scripts/self-test.sh` covers JSON identity matching and fresh-state guards; `scripts/doctor.sh` runs it
-- Dual high-risk review: neutral background Opus seed -> two blind independent reviewer forks; each reviewer is sticky for its own re-review loop
+- Ordinary review: one fresh Claude Opus foreground reviewer, xhigh effort, read-only, no --bare
+- Claude calls: synchronous `claude -p`, captured output, explicit exit-code and result-file checks
+- Re-review: a fresh foreground call reads the original packet, previous result, and fix delta
+- State discipline: `stage=done` and a complete result contract are the collection gate
+- No job registry, terminal-log parsing, conversation ID tracking, or daemon/socket dependency
+- Permission discipline: dontAsk + permission-prompts none + Read/Glob/Grep + explicit MCP deny
+- Verification: `bash scripts/self-test.sh` covers result contracts and fresh-state guards; `scripts/doctor.sh` runs it
+- Dual high-risk review: neutral foreground Opus seed -> two blind independent foreground reviewers
 - Review fallback: Luna Max/Standard, read-only, no Ponytail
-- Difficult-task advisory panel: neutral background Opus seed -> 3-4 role-diverse background forks by default, max 6
-- Sticky Opus advisor: a useful completed expert branch is resumed in the same conversation for same-domain follow-ups
-- Cache policy: seed/forks keep model, effort, tools, permission mode, system prompt, and working directory/shared add-dir stable
+- Difficult-task advisory panel: neutral foreground Opus seed -> 2-6 role-diverse foreground calls, sequentially
+- Opus follow-up: a useful branch receives its previous result and new question in a fresh foreground call
+- Shared context: calls keep model, effort, tools, permission mode, system prompt, and `--add-dir` stable
 - Claude tool boundary: Read/Glob/Grep only; MCP tools explicitly denied
 - Parallel Worker: Luna Max/Standard + Ponytail FULL, parallel-only
 - Sol advisor: Max, sticky, no Ponytail; narrow unresolved judgment only

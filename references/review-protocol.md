@@ -1,20 +1,16 @@
-# Independent review protocol — v6.6
+# Independent review protocol
 
-The review unit is a **coherent completed change**, not an individual edit.
+The review unit is a coherent completed change, not an individual edit.
 
-## Ordinary review: one fresh reviewer, sticky until acceptance
+## Ordinary review
 
 ```text
 Primary implements + validates
-  -> fresh Opus Reviewer 1 --bg
-  -> reviewer works independently of Codex shell
-  -> state=done
-  -> collect result
+  -> foreground Opus review
+  -> result contract
   -> Primary fixes findings
-  -> resume SAME Reviewer 1 conversation --bg
-  -> state=done
-  -> collect re-review
-  -> repeat same session until PASS / accepted risk
+  -> fresh foreground re-review with fix delta
+  -> repeat until PASS / accepted risk
 ```
 
 Commands:
@@ -26,51 +22,19 @@ claude-review.sh collect STATE_DIR
 claude-review.sh resume STATE_DIR FIX_DELTA
 ```
 
-### Sticky-reviewer invariant
+`resume` is a compatibility command name. It does not reuse a live
+conversation; it supplies the original packet, previous result, and fix delta
+to a new foreground invocation.
 
-`resume` means **resume the same Claude conversation**, not create a fork.
-
-The helper distinguishes:
-
-- background `job_id`: short ID used by `claude logs`, `claude stop`, and agent state;
-- conversation `sessionId`: full Claude conversation ID used by `claude --resume`.
-
-A re-review may receive a new short background job ID, but its conversation `sessionId` must remain identical. v6.6 stores and verifies this identity. If the sessionId changes unexpectedly, stop and inspect rather than silently accepting a fresh reviewer.
-
-Never resume while the current reviewer run is `working` or `blocked`. `state=done` is the gate that makes same-session resume safe; `status=idle` is not that gate.
-
-The terminal footer `Worked for ... · done` describes the latest Claude turn,
-not necessarily the background lifecycle. If `claude logs JOB_ID` contains a
-complete review contract but `claude agents` still reports
-`status=idle,state=working`, the turn is complete but the session is still
-open. Do not duplicate or resume it; inspect/close the attached or stale
-session and re-check its lifecycle.
-
-Why same-session re-review is preferred:
-
-- the reviewer remembers its own prior findings and evidence;
-- the Primary can send only the fix delta and verification evidence;
-- repeated repository/context loading is reduced;
-- closure of OPEN/CLOSED findings is more reliable;
-- prompt-cache/context continuity is more likely to help.
-
-A **fresh** reviewer is for independent second opinion, not routine finding closure.
-
-## High-risk review: neutral seed + two blind reviewers
+## High-risk dual review
 
 ```text
 review packet
     |
-neutral seed --bg (NO verdict, NO defect analysis)
+neutral foreground seed (SEED_READY only)
     |
- state=done
-    |
-    +-- fork --bg -> Reviewer 1
-    |
-    +-- fork --bg -> Reviewer 2
+foreground Reviewer 1 + foreground Reviewer 2
 ```
-
-Commands:
 
 ```bash
 claude-review.sh dual-start REVIEW_PACKET GROUP_DIR
@@ -79,17 +43,8 @@ claude-review.sh dual-advance GROUP_DIR
 claude-review.sh dual-collect GROUP_DIR
 ```
 
-Call `dual-advance` only after the seed is `done`.
-
-Both reviewers inherit the same factual prefix but neither sees the other's findings. The seed response is only `SEED_READY`.
-
-After fixes, resume **the same reviewer branch** whose findings need closure:
-
-```bash
-claude-review.sh resume GROUP_DIR/reviewer-1 FIX_DELTA
-```
-
-Do not fork a third reviewer merely to re-check Reviewer 1's own findings.
+The two reviewers run sequentially and independently. Neither reads the other
+reviewer's result before completing its own analysis.
 
 ## Review packet
 
@@ -104,55 +59,13 @@ Tests/checks run and results:
 Known compromises / open concerns:
 ```
 
-The implementer uses Ponytail FULL. Opus/Luna reviewers do not.
-
-## When to add Reviewer 2
-
-Use a second blind reviewer only when independence has unusually high expected value, including:
-
-- security/authentication/authorization boundaries;
-- persistent-data loss, migration, destructive behavior, or recovery logic;
-- concurrency, memory ownership/lifetime, subtle ordering, distributed protocol correctness;
-- public/wire protocol, ABI, compatibility changes with broad blast radius;
-- delicate mathematical/numerical correctness;
-- large cross-cutting refactors with hard-to-test invariants;
-- Reviewer 1 reports a critical/major conceptual concern and a fresh second opinion is useful;
-- Primary materially disagrees with Reviewer 1;
-- user explicitly requests stronger review.
-
-## Synthesis of two reviews
-
-Luna synthesizes; reviewers do not debate each other directly.
-
-Do not count votes:
-
-- same concrete defect from both -> confidence rises;
-- one concrete counterexample -> investigate even if the other says PASS;
-- conflict -> inspect the exact repository fact/invariant separating conclusions;
-- re-review only findings whose closure matters, using each reviewer's own sticky session.
-
-## Background-state discipline
-
-- `working`: wait/continue Primary work; no duplicate and no resume.
-- `status=idle`: no current token/tool activity; it is not a verdict or a completion gate.
-- `blocked`: inspect logs; no duplicate and no resume.
-- `done`: collect result; same-session resume is allowed; fork only for intentional independence.
-- `failed/stopped`: inspect cause; retry only deliberately.
-
-If a blocked reviewer shows `⏸ plan mode on` and a blank input prompt, attach
-to that exact job and send one explicit read-only continuation message. Do not
-approve edits or toggle permissions for a reviewer whose tool set is already
-`Read,Glob,Grep`.
-
-A Codex shell timeout/yield is unrelated to these states.
-
 ## Reviewer output contract
 
 ```text
 VERDICT: PASS | CHANGES_REQUIRED | PASS_WITH_RISK
 
 BLOCKERS:
-- severity, file/location, concrete failure scenario, required correction
+- severity, location, failure scenario, required correction
 
 NONBLOCKING:
 - only materially useful items
@@ -161,7 +74,8 @@ TEST_GAPS:
 - missing verification that could expose a real defect
 
 PREVIOUS_FINDINGS:
-- OPEN/CLOSED on sticky re-review turns
+- OPEN/CLOSED on re-review turns
 ```
 
-Reviewers do not implement fixes.
+Reviewers do not implement fixes. Luna synthesizes evidence rather than
+counting votes.
