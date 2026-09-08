@@ -1,4 +1,4 @@
-# Luna Orchestrator v6.6 for Codex Desktop / CLI
+# Luna Primary Engineer v6.6 for Codex Desktop / CLI
 
 v6.6 keeps **Luna Max/Fast** as the persistent Primary Engineer, uses **Ponytail FULL** for implementation economy, and uses Claude Opus as an optional external reviewer / difficult-task reasoning accelerator.
 
@@ -329,13 +329,13 @@ No `--bare` is used because it caused authentication failures in observed setups
 Defaults:
 
 ```bash
-export LUNA_ORCH_CLAUDE=auto
-export LUNA_ORCH_CLAUDE_MODEL=opus
-export LUNA_ORCH_CLAUDE_REVIEW_EFFORT=xhigh
-export LUNA_ORCH_CLAUDE_PANEL_EFFORT=max
+export LUNA_PRIMARY_ENGINEER_CLAUDE=auto
+export LUNA_PRIMARY_ENGINEER_CLAUDE_MODEL=opus
+export LUNA_PRIMARY_ENGINEER_CLAUDE_REVIEW_EFFORT=xhigh
+export LUNA_PRIMARY_ENGINEER_CLAUDE_PANEL_EFFORT=max
 ```
 
-Set `LUNA_ORCH_CLAUDE=off` to force Luna review/no Opus panel. `on` skips the auth-status precheck; `auto` requires `claude auth status` to succeed.
+Set `LUNA_PRIMARY_ENGINEER_CLAUDE=off` to force Luna review/no Opus panel. `on` skips the auth-status precheck; `auto` requires `claude auth status` to succeed.
 
 If `ANTHROPIC_API_KEY` is set, the scripts warn because Claude usage may be API-billed rather than coming from the intended subscription context.
 
@@ -348,15 +348,15 @@ Claude background sessions can have macOS privacy restrictions when repositories
 First install needs `git` to fetch Ponytail unless a local checkout is supplied.
 
 ```bash
-unzip luna-orchestrator-v6.6.zip
-cd luna-orchestrator
+unzip luna-primary-engineer-v6.6.zip
+cd luna-primary-engineer
 bash scripts/install.sh
 ```
 
 Offline/local Ponytail:
 
 ```bash
-LUNA_ORCH_PONYTAIL_SOURCE=/path/to/ponytail bash scripts/install.sh
+LUNA_PRIMARY_ENGINEER_PONYTAIL_SOURCE=/path/to/ponytail bash scripts/install.sh
 ```
 
 Then fully quit/restart Codex Desktop and start a new session with:
@@ -368,7 +368,7 @@ Then fully quit/restart Codex Desktop and start a new session with:
 Invoke:
 
 ```text
-$luna-orchestrator
+$luna-primary-engineer
 ```
 
 ## Verify

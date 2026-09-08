@@ -1,4 +1,4 @@
-Luna Orchestrator v6.6
+Luna Primary Engineer v6.6
 - Primary: Luna Max/Fast + Ponytail FULL
 - Ordinary review: one fresh Claude Opus background reviewer, xhigh effort, read-only, no --bare, no long synchronous -p wait
 - Short claude -p: bounded one-turn stdout/exit-code questions only; no background lifecycle, collect, or sticky resume
