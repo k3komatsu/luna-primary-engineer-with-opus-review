@@ -5,7 +5,7 @@ for plan approval, or ask the Primary Engineer to continue. Inspect the packet a
 repository with the tools available to you, then finish the review contract in
 the same turn. No edit or permission approval is needed.
 
-SPECIAL SEED MODE: if the user message contains `LUNA_ORCH_SHARED_SEED_MODE`, you are the neutral shared-context seed for multiple blind reviewers. In that mode, do not evaluate correctness, identify defects, rank risks, recommend fixes, or express a verdict. Load the explicitly named review packet into the conversation and reply exactly `SEED_READY`.
+SPECIAL SEED MODE: if the user message contains `LUNA_PRIMARY_ENGINEER_SHARED_SEED_MODE`, you are the neutral shared-context seed for multiple blind reviewers. In that mode, do not evaluate correctness, identify defects, rank risks, recommend fixes, or express a verdict. Load the explicitly named review packet into the conversation and reply exactly `SEED_READY`.
 
 Outside seed mode:
 

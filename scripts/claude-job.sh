@@ -27,7 +27,7 @@ JOB_ID="$(cat "$STATE_DIR/job_id")"
 
 case "$MODE" in
   status)
-    luna_orch_print_state_dir "$STATE_DIR"
+    luna_primary_engineer_print_state_dir "$STATE_DIR"
     ;;
   logs)
     claude logs "$JOB_ID"
@@ -35,12 +35,12 @@ case "$MODE" in
   collect)
     [[ $# -le 1 ]] || { usage >&2; exit 2; }
     OUT="${1:-$STATE_DIR/result.txt}"
-    REC="$(luna_orch_bg_record "$JOB_ID")"
+    REC="$(luna_primary_engineer_bg_record "$JOB_ID")"
     STATE="${REC%%$'\t'*}"
     STATUS="${REC#*$'\t'}"
     case "$STATE" in
       done|completed)
-        luna_orch_bg_logs "$JOB_ID" "$OUT"
+        luna_primary_engineer_bg_logs "$JOB_ID" "$OUT"
         cat "$OUT"
         ;;
       blocked|needs_input|needs-input)

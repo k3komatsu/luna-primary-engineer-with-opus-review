@@ -61,7 +61,7 @@ No hard `--max-turns` is used. Claude Code's print-mode max-turn limit can termi
 Default mode:
 
 ```bash
-export LUNA_ORCH_CLAUDE=auto
+export LUNA_PRIMARY_ENGINEER_CLAUDE=auto
 ```
 
 - `auto`: requires `claude auth status` to succeed.
@@ -90,9 +90,9 @@ If `ANTHROPIC_API_KEY` is set, the helpers warn because the run may be API-bille
 Defaults:
 
 ```bash
-export LUNA_ORCH_CLAUDE_MODEL=opus
-export LUNA_ORCH_CLAUDE_REVIEW_EFFORT=xhigh
-export LUNA_ORCH_CLAUDE_PANEL_EFFORT=max
+export LUNA_PRIMARY_ENGINEER_CLAUDE_MODEL=opus
+export LUNA_PRIMARY_ENGINEER_CLAUDE_REVIEW_EFFORT=xhigh
+export LUNA_PRIMARY_ENGINEER_CLAUDE_PANEL_EFFORT=max
 ```
 
 For seed-and-fork operations, seed and branches keep model/effort/tool/system-prompt/working-directory configuration stable for cache-friendly lineage.
