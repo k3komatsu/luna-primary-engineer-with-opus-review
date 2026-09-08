@@ -1,4 +1,4 @@
-# Agent and external-session lifecycle v6.5
+# Agent and external-session lifecycle v6.6
 
 ## Primary
 
@@ -9,13 +9,16 @@ The root Luna Max/Fast session is the long-lived Primary Engineer and default ow
 Every long Claude reviewer/advisor job is supervised by Claude Code, not by one Codex shell call.
 
 ```text
-working / idle -> leave alone
-blocked        -> inspect, do not duplicate/resume
-done           -> collect; same session may resume, or fork if independence is intended
+status=idle    -> activity substate only; inspect lifecycle state
+state=working  -> leave alone
+state=blocked  -> inspect, do not duplicate/resume; attach only for explicit read-only continuation
+state=done     -> collect; same session may resume, or fork if independence is intended
 failed/stopped -> inspect cause before retry
 ```
 
 A Codex shell timeout/yield is not a Claude lifecycle event.
+The `Worked ... · done` footer in logs is turn completion, not necessarily
+lifecycle completion; it may appear while `status=idle,state=working`.
 
 ## Claude Opus review sessions
 

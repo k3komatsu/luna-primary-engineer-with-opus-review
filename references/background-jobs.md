@@ -1,6 +1,6 @@
-# Claude background job lifecycle — v6.5
+# Claude background job lifecycle — v6.6
 
-v6.5 separates **dispatch** from **completion**, and also separates a Claude background **job ID** from the underlying conversation **sessionId**.
+v6.6 separates **dispatch** from **completion**, and also separates a Claude background **job ID** from the underlying conversation **sessionId**.
 
 Long Opus work is launched with `claude --bg`. The launch command returns quickly; Claude continues under its own background supervisor even when the launching shell is gone.
 
@@ -12,11 +12,13 @@ For sticky re-review/advice, the completed Claude conversation is resumed by its
 
 ## State machine
 
-Use `claude agents --json --all` through the helpers and honor these states:
+Use `claude agents --json --all` through the helpers and honor these states.
+The `state` field is the lifecycle gate; `status` is only the current activity
+substate. In particular, `status=idle` does not mean the review is complete.
 
 ```text
 working / idle
-  -> healthy/in progress; DO NOTHING destructive
+  -> nonterminal session; DO NOTHING destructive
 
 blocked
   -> inspect logs/status; do not auto-replace or resume
@@ -37,6 +39,13 @@ Hard rule:
 > **Never resume, fork, retry, or duplicate a Claude job while its state is `working` or `blocked`.**
 
 Two processes must not write the same Claude conversation concurrently.
+
+`claude logs <id>` can show a terminal footer such as `Worked for ... · done`
+before the background registry reaches `state=done`. That footer means the
+latest Claude turn rendered a response; it does not by itself authorize
+`collect` or `resume`. If the log also contains the complete review contract,
+the turn is **turn-complete but lifecycle-open**. Do not launch a duplicate;
+check for an attached client or stale daemon state and re-check the lifecycle.
 
 ## Resume vs fork
 
@@ -59,7 +68,7 @@ Claude agent state exposes both:
 - `id`: short background ID for `claude logs`, `claude stop`, `claude attach`;
 - `sessionId`: full conversation ID for `claude --resume`.
 
-v6.5 helpers persist `sessionId` for sticky sessions and verify that re-review/follow-up has not silently switched conversations.
+v6.6 helpers persist `sessionId` for sticky sessions and verify that re-review/follow-up has not silently switched conversations. They reject an empty agent `id` when matching JSON so the interactive parent session cannot be mistaken for a newly launched background job.
 
 ## Helpers
 
@@ -93,7 +102,7 @@ claude-panel.sh followup panel/analyst delta.md   # same analyst conversation
 
 ## Polling discipline
 
-Do not tight-loop status checks. Check at natural Primary work boundaries. If useful Primary work remains, continue it while Opus works.
+Do not tight-loop status checks. Check at natural Primary work boundaries. If useful Primary work remains, continue it while Opus works. When a complete contract is visible in logs but `state=working`, do not wait forever or launch a duplicate; resolve the open/attached session deliberately and then re-check.
 
 ## Blocked jobs
 
@@ -101,11 +110,18 @@ When blocked:
 
 1. inspect `claude logs <id>`;
 2. do not launch a replacement or resume concurrently;
-3. if a human action is genuinely required, surface it or attach to the session;
+3. if logs show an input prompt or plan-mode pause, attach to the session and send one explicit read-only continuation instruction; if a genuine human decision is required, surface it;
 4. continue only after the same job is unblocked or intentionally stopped.
 
 ## Background-session caveats
 
 On macOS, background Claude sessions can have additional OS privacy restrictions for repositories under Desktop, Documents, or Downloads. Fix the OS/location issue rather than duplicating jobs.
 
-Background sessions are durable but not immortal. Machine shutdown, daemon failures, upgrades, or bugs can stop/strand jobs. `failed/stopped` is an inspection trigger, not an automatic retry trigger.
+Background sessions are durable but not immortal. Machine shutdown, daemon
+failures, upgrades, expired auth, or bugs can stop/strand jobs. `failed/stopped`
+is an inspection trigger, not an automatic retry trigger. For `unknown` or a
+log failure such as `ECONNREFUSED`/`ENOENT` on `control.sock`, inspect
+`claude auth status`, `claude doctor`, the exact daemon socket, and running
+processes before a deliberate retry. A filesystem `EROFS` under
+`~/.claude/jobs` is a host/sandbox write-permission issue, not a reviewer
+approval request.

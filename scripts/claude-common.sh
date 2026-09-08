@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared helpers for Luna Orchestrator v6.5 Claude Code background integration.
+# Shared helpers for Luna Orchestrator v6.6 Claude Code background integration.
 
 luna_orch_claude_mode() {
   printf '%s' "${LUNA_ORCH_CLAUDE:-auto}"
@@ -19,6 +19,24 @@ luna_orch_claude_available() {
 luna_orch_warn_billing() {
   if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
     echo "WARN: ANTHROPIC_API_KEY is set; Claude Code may be using API-billed authentication." >&2
+  fi
+}
+
+luna_orch_require_fresh_state_dir() {
+  local state_dir="$1"
+  if [[ -e "$state_dir/job_id" || -e "$state_dir/session_id" || -e "$state_dir/launch.txt" || -e "$state_dir/launch_exit_code" ]]; then
+    echo "ERROR: state directory already contains Claude identity/launch evidence: $state_dir. Use a new state directory, or use status/collect/resume for the existing review." >&2
+    return 2
+  fi
+}
+
+luna_orch_require_fresh_state_tree() {
+  local root="$1" marker
+  [[ -d "$root" ]] || return 0
+  marker="$(find "$root" -type f \( -name job_id -o -name session_id -o -name launch.txt -o -name launch_exit_code \) -print -quit 2>/dev/null || true)"
+  if [[ -n "$marker" ]]; then
+    echo "ERROR: state tree already contains Claude identity/launch evidence: $marker. Use a new output directory, or inspect the existing run first." >&2
+    return 2
   fi
 }
 
@@ -52,9 +70,10 @@ luna_orch_extract_bg_id() {
 # Uses jq, Python, Node, or JXA (macOS) in that order.
 luna_orch_bg_record_from_json() {
   local json_file="$1" wanted="$2"
+  [[ -n "$wanted" ]] || return 1
   if command -v jq >/dev/null 2>&1; then
     jq -r --arg id "$wanted" '
-      first(.[] | (.id // "") as $rid | select($rid == $id or ($rid | startswith($id)) or ($id | startswith($rid))))
+      first(.[] | (.id // "") as $rid | select($rid != "" and ($rid == $id or ($rid | startswith($id)) or ($id | startswith($rid)))))
       | [(.state // "unknown"), (.status // "")] | @tsv
     ' "$json_file" 2>/dev/null || true
     return
@@ -67,7 +86,7 @@ with open(sys.argv[1], encoding='utf-8') as f:
 wanted = sys.argv[2]
 for row in rows:
     rid = str(row.get('id', ''))
-    if rid == wanted or rid.startswith(wanted) or wanted.startswith(rid):
+    if rid and (rid == wanted or rid.startswith(wanted) or wanted.startswith(rid)):
         status = row.get('status', '')
         if not isinstance(status, str):
             status = json.dumps(status, ensure_ascii=False)
@@ -83,7 +102,7 @@ const rows = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const wanted = process.argv[3];
 for (const row of rows) {
   const id = String(row.id || '');
-  if (id === wanted || id.startsWith(wanted) || wanted.startsWith(id)) {
+  if (id && (id === wanted || id.startsWith(wanted) || wanted.startsWith(id))) {
     const status = typeof row.status === 'string' ? row.status : JSON.stringify(row.status || '');
     process.stdout.write(`${row.state || 'unknown'}\t${status}\n`);
     break;
@@ -101,7 +120,7 @@ const text = $.NSString.stringWithContentsOfFileEncodingError(path, $.NSUTF8Stri
 const rows = JSON.parse(text);
 for (const row of rows) {
   const id = String(row.id || '');
-  if (id === wanted || id.startsWith(wanted) || wanted.startsWith(id)) {
+  if (id && (id === wanted || id.startsWith(wanted) || wanted.startsWith(id))) {
     const status = typeof row.status === 'string' ? row.status : JSON.stringify(row.status || '');
     console.log(`${row.state || 'unknown'}\t${status}`);
     break;
@@ -136,12 +155,13 @@ luna_orch_bg_record() {
 # Resolve the full Claude conversation sessionId for one background job ID.
 # `claude agents --json --all` exposes both a short background `id` (for
 # attach/logs/stop) and a full `sessionId` (for `claude --resume`). Keep them
-# distinct: v6.5 uses sessionId for sticky same-conversation follow-ups.
+# distinct: v6.6 uses sessionId for sticky same-conversation follow-ups.
 luna_orch_bg_session_id_from_json() {
   local json_file="$1" wanted="$2"
+  [[ -n "$wanted" ]] || return 1
   if command -v jq >/dev/null 2>&1; then
     jq -r --arg id "$wanted" '
-      first(.[] | (.id // "") as $rid | select($rid == $id or ($rid | startswith($id)) or ($id | startswith($rid))))
+      first(.[] | (.id // "") as $rid | select($rid != "" and ($rid == $id or ($rid | startswith($id)) or ($id | startswith($rid)))))
       | (.sessionId // "")
     ' "$json_file" 2>/dev/null || true
     return
@@ -154,7 +174,7 @@ with open(sys.argv[1], encoding='utf-8') as f:
 wanted = sys.argv[2]
 for row in rows:
     rid = str(row.get('id', ''))
-    if rid == wanted or rid.startswith(wanted) or wanted.startswith(rid):
+    if rid and (rid == wanted or rid.startswith(wanted) or wanted.startswith(rid)):
         print(str(row.get('sessionId', '') or ''))
         break
 PY2
@@ -167,7 +187,7 @@ const rows = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const wanted = process.argv[3];
 for (const row of rows) {
   const id = String(row.id || '');
-  if (id === wanted || id.startsWith(wanted) || wanted.startsWith(id)) {
+  if (id && (id === wanted || id.startsWith(wanted) || wanted.startsWith(id))) {
     process.stdout.write(String(row.sessionId || '') + '\n');
     break;
   }
@@ -184,7 +204,7 @@ const text = $.NSString.stringWithContentsOfFileEncodingError(path, $.NSUTF8Stri
 const rows = JSON.parse(text);
 for (const row of rows) {
   const id = String(row.id || '');
-  if (id === wanted || id.startsWith(wanted) || wanted.startsWith(id)) {
+  if (id && (id === wanted || id.startsWith(wanted) || wanted.startsWith(id))) {
     console.log(String(row.sessionId || ''));
     break;
   }
@@ -236,6 +256,14 @@ luna_orch_bg_logs() {
   claude logs "$id" >"$out"
 }
 
+luna_orch_review_contract_complete() {
+  local file="$1" heading
+  [[ -f "$file" ]] || return 1
+  for heading in VERDICT BLOCKERS NONBLOCKING TEST_GAPS PREVIOUS_FINDINGS; do
+    grep -Fq "$heading" "$file" || return 1
+  done
+}
+
 # Exit codes used by status/collect helpers:
 #   0 done
 #  10 still working/idle
@@ -243,6 +271,7 @@ luna_orch_bg_logs() {
 #  12 failed
 #  13 stopped
 #  14 unknown/not listed
+#  18 completed output is missing the review contract
 luna_orch_bg_state_code() {
   case "$1" in
     done|completed) return 0 ;;

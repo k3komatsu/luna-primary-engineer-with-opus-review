@@ -15,9 +15,14 @@ check_file() {
 check_file "$SKILL"
 check_file "$ROOT_PONYTAIL"
 check_file "$PRIVATE_PONYTAIL"
-for f in claude-common.sh claude-job.sh claude-review.sh claude-panel.sh; do
+for f in claude-common.sh claude-job.sh claude-review.sh claude-panel.sh self-test.sh; do
   check_file "${HOME}/.agents/skills/luna-orchestrator/scripts/$f"
 done
+if [[ -f "${HOME}/.agents/skills/luna-orchestrator/scripts/self-test.sh" ]] && bash "${HOME}/.agents/skills/luna-orchestrator/scripts/self-test.sh" >/dev/null 2>&1; then
+  echo "OK   Claude helper self-test"
+else
+  echo "FAIL Claude helper self-test"; FAIL=1
+fi
 for f in luna_worker luna_reviewer sol_advisor astra_expert; do check_file "$AGENTS/$f.toml"; done
 
 if [[ -f "$AGENTS/luna_explorer.toml" ]]; then echo "FAIL obsolete luna_explorer still installed"; FAIL=1; else echo "OK   obsolete luna_explorer absent"; fi
@@ -60,9 +65,11 @@ if command -v claude >/dev/null 2>&1; then
     echo "WARN Claude Code installed but auth status failed; fallback Luna review will be used in auto mode"
   fi
   HELP="$(claude --help 2>&1 || true)"
-  if grep -q -- '--bg' <<<"$HELP"; then echo "OK   Claude Code supports --bg"; else echo "WARN Claude Code --bg not found; update Claude Code for v6.5 background review"; fi
-  if grep -q -- '--fork-session' <<<"$HELP"; then echo "OK   Claude Code supports --fork-session"; else echo "WARN Claude Code --fork-session not found; update Claude Code for v6.5 seed/independent-review forks"; fi
-  if claude agents --help >/dev/null 2>&1; then echo "OK   Claude agent-view commands available"; else echo "WARN 'claude agents' unavailable; v6.5 background state tracking will not work"; fi
+  if grep -q -- '--bg' <<<"$HELP"; then echo "OK   Claude Code supports --bg"; else echo "WARN Claude Code --bg not found; update Claude Code for v6.6 background review"; fi
+  if grep -q -- '--fork-session' <<<"$HELP"; then echo "OK   Claude Code supports --fork-session"; else echo "WARN Claude Code --fork-session not found; update Claude Code for v6.6 seed/independent-review forks"; fi
+  if grep -q -- '--permission-prompts' <<<"$HELP"; then echo "OK   Claude Code supports --permission-prompts"; else echo "WARN Claude Code lacks --permission-prompts; read-only reviews may pause for approval"; fi
+  if grep -q -- 'dontAsk' <<<"$HELP"; then echo "OK   Claude Code supports dontAsk permission mode"; else echo "WARN Claude Code lacks dontAsk permission mode; read-only reviews may enter plan mode"; fi
+  if claude agents --help >/dev/null 2>&1; then echo "OK   Claude agent-view commands available"; else echo "WARN 'claude agents' unavailable; v6.6 background state tracking will not work"; fi
 else
   echo "WARN Claude Code not installed; fallback Luna review will be used"
 fi
@@ -72,7 +79,7 @@ if [[ "${DISABLE_PROMPT_CACHING:-0}" == "1" || "${DISABLE_PROMPT_CACHING_OPUS:-0
   echo "WARN Opus prompt caching is disabled; seed-and-fork still works functionally but loses its main cache-cost benefit"
 fi
 if [[ -n "${LUNA_ORCH_CLAUDE_MAX_TURNS_REVIEW:-}" || -n "${LUNA_ORCH_CLAUDE_MAX_TURNS_PANEL:-}" ]]; then
-  echo "INFO legacy max-turn environment variables are set but v6.5 ignores them because background mode does not use print-mode turn caps"
+  echo "INFO legacy max-turn environment variables are set but v6.6 ignores them because background mode does not use print-mode turn caps"
 fi
 if [[ -f "${HOME}/.config/ponytail/config.json" ]] && grep -Eqi '"defaultMode"[[:space:]]*:[[:space:]]*"(lite|full|ultra)"' "${HOME}/.config/ponytail/config.json"; then
   echo "WARN global Ponytail default appears active; it may reduce reviewer/advisor independence"

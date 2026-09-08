@@ -19,10 +19,13 @@ Usage:
   claude-review.sh dual-advance GROUP_DIR
   claude-review.sh dual-collect GROUP_DIR
 
-v6.5 lifecycle:
+v6.6 lifecycle:
   - Every long Opus review runs as a Claude Code background session (`claude --bg`).
   - start/dual-start return immediately after dispatch.
+  - `status=idle` is only an activity substate; only lifecycle `state=done` is a collect gate.
+  - A `Worked ... · done` log footer may mean the turn rendered while the session remains open.
   - `working` is NEVER treated as timeout/failure and MUST NOT be duplicated.
+  - If blocked in plan/input mode, inspect logs and attach with one explicit read-only continuation.
   - re-review resumes the SAME completed reviewer conversation (sticky until PASS).
   - dual review is a background neutral seed, followed by two blind background forks; each reviewer then stays sticky for re-review.
 
@@ -59,7 +62,8 @@ SYSTEM_PROMPT="$ROOT_DIR/references/claude/reviewer-system.md"
 base_args=(
   --model "$MODEL"
   --effort "$EFFORT"
-  --permission-mode plan
+  --permission-mode dontAsk
+  --permission-prompts none
   --tools "Read,Glob,Grep"
   --disallowedTools "mcp__*"
   --append-system-prompt-file "$SYSTEM_PROMPT"
@@ -124,6 +128,10 @@ review_collect() {
         return 17
       fi
       luna_orch_bg_logs "$id" "$out"
+      if ! luna_orch_review_contract_complete "$out"; then
+        echo "ERROR: reviewer $id reached state=done but its log lacks the complete review contract; inspect $out before any resume/retry." >&2
+        return 18
+      fi
       if [[ -f "$state_dir/current_round" ]]; then
         round_dir="$state_dir/$(cat "$state_dir/current_round")"
         mkdir -p "$round_dir"
@@ -168,13 +176,14 @@ case "$MODE" in
     STATE_DIR="${2:-$(luna_orch_runtime_dir)-review}"
     LABEL="${3:-reviewer-1}"
     [[ -f "$PACKET" ]] || { echo "ERROR: packet not found: $PACKET" >&2; exit 2; }
+    luna_orch_require_fresh_state_dir "$STATE_DIR" || exit $?
     mkdir -p "$STATE_DIR"
     cp "$PACKET" "$STATE_DIR/review-packet.md"
     printf '%s\n' "$LABEL" > "$STATE_DIR/label"
     printf 'single-review\n' > "$STATE_DIR/kind"
     PACKET_ABS="$(cd "$STATE_DIR" && pwd)/review-packet.md"
     launch_bg "$STATE_DIR" "luna-orch-$LABEL" \
-      "Independently review the coherent change. First read the review packet at: $PACKET_ABS . Inspect repository files only as needed. Do not ask the orchestrator questions; if evidence is incomplete, record the uncertainty in the review and finish. Return the review contract from your system instructions."
+      "This is a single-turn background review. Do not stop in plan mode or wait for approval. Independently review the coherent change. First read the review packet at: $PACKET_ABS . Inspect repository files only as needed. Do not ask the orchestrator questions; if evidence is incomplete, record the uncertainty in the review and finish. Return the review contract from your system instructions."
     ;;
 
   status)
@@ -250,6 +259,7 @@ case "$MODE" in
     PACKET="$1"
     GROUP="${2:-$(luna_orch_runtime_dir)-dual-review}"
     [[ -f "$PACKET" ]] || { echo "ERROR: packet not found: $PACKET" >&2; exit 2; }
+    luna_orch_require_fresh_state_tree "$GROUP" || exit $?
     mkdir -p "$GROUP/seed" "$GROUP/reviewer-1" "$GROUP/reviewer-2"
     cp "$PACKET" "$GROUP/review-packet.md"
     printf '%s\n' "$PWD" > "$GROUP/cwd"
@@ -261,7 +271,7 @@ case "$MODE" in
     LAUNCH="$GROUP/seed/launch.txt"
     set +e
     claude --bg "${base_args[@]}" --add-dir "$GROUP" --name "luna-review-seed" \
-      "LUNA_ORCH_SHARED_SEED_MODE. Read the review packet at: $PACKET_ABS . Load it as shared factual context only. Do not evaluate correctness, identify defects, rank risks, or propose fixes. Do not ask questions. Reply exactly SEED_READY when loaded." >"$LAUNCH" 2>&1
+      "LUNA_ORCH_SHARED_SEED_MODE. This is a single-turn background load; do not stop for plan approval. Read the review packet at: $PACKET_ABS . Load it as shared factual context only. Do not evaluate correctness, identify defects, rank risks, or propose fixes. Do not ask questions. Reply exactly SEED_READY when loaded." >"$LAUNCH" 2>&1
     RC=$?
     set -e
     printf '%s\n' "$RC" > "$GROUP/seed/launch_exit_code"
@@ -316,7 +326,7 @@ case "$MODE" in
       set +e
       claude --bg "${base_args[@]}" --add-dir "$GROUP" \
         --resume "$SEED_SESSION_ID" --fork-session --name "luna-orch-reviewer-$n" \
-        "You are Reviewer $n, an independent blind branch forked from the neutral review seed. Review the inherited coherent change now. Never seek or infer the other reviewer's opinion. Inspect repository files only as needed. Do not ask the orchestrator questions; record uncertainty and finish. Return the review contract from your system instructions." >"$LAUNCH" 2>&1
+        "You are Reviewer $n, an independent blind branch forked from the neutral review seed. This is a single-turn background review; do not stop for plan approval. Review the inherited coherent change now. Never seek or infer the other reviewer's opinion. Inspect repository files only as needed. Do not ask the orchestrator questions; record uncertainty and finish. Return the review contract from your system instructions." >"$LAUNCH" 2>&1
       RC=$?
       set -e
       printf '%s\n' "$RC" > "$D/launch_exit_code"
@@ -346,6 +356,11 @@ case "$MODE" in
         done|completed)
           luna_orch_store_session_id "$D" >/dev/null 2>&1 || true
           luna_orch_bg_logs "$ID" "$D/result.txt"
+          if ! luna_orch_review_contract_complete "$D/result.txt"; then
+            echo "INCOMPLETE: reviewer-$n $ID reached state=done but its log lacks the complete review contract." >&2
+            FAIL=18
+            continue
+          fi
           [[ -f "$D/initial-result.txt" ]] || cp "$D/result.txt" "$D/initial-result.txt"
           printf 'reviewer-%s\t%s\t%s\t%s\n' "$n" "$STATE" "$ID" "$D/result.txt" >> "$GROUP/manifest.tsv"
           ;;

@@ -1,4 +1,4 @@
-# Ponytail integration in v6.5
+# Ponytail integration in v6.6
 
 Ponytail is used by **implementers**, not independent reviewers or advisors.
 
@@ -36,4 +36,4 @@ The Primary reads/applies it explicitly before substantive implementation.
 
 ## Global Ponytail warning
 
-A globally injected Ponytail plugin can contaminate roles that are deliberately meant to be independent. For strict v6.5 behavior, use this package's private integration rather than global injection during Luna Orchestrator sessions.
+A globally injected Ponytail plugin can contaminate roles that are deliberately meant to be independent. For strict v6.6 behavior, use this package's private integration rather than global injection during Luna Orchestrator sessions.

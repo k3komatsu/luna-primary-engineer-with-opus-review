@@ -1,4 +1,4 @@
-# Opus Advisory Panel — v6.5
+# Opus Advisory Panel — v6.6
 
 Use a panel only when the difficult part is **reasoning**, not routine implementation.
 
@@ -93,7 +93,10 @@ This dispatches all independent forked experts as Claude background jobs. Later:
 claude-panel.sh collect OUTPUT_DIR
 ```
 
-`collect` succeeds only when all branches are done. `working` is not failure and never triggers replacement.
+`collect` succeeds only when all branches have lifecycle `state=done`.
+`status=idle` is not completion, and a `Worked ... · done` log footer can still
+mean that the session is lifecycle-open. `working` is not failure and never
+triggers replacement.
 
 ## Synthesis
 
@@ -120,6 +123,6 @@ If one completed expert branch is uniquely useful and the same decision domain c
 claude-panel.sh followup BRANCH_DIR DELTA_FILE
 ```
 
-v6.5 resumes **that same expert conversation sessionId** without `--fork-session`. This preserves the specialist's accumulated domain context and avoids paying to rebuild it. A new fork is appropriate only when you deliberately want an independent perspective.
+v6.6 resumes **that same expert conversation sessionId** without `--fork-session`. This preserves the specialist's accumulated domain context and avoids paying to rebuild it. A new fork is appropriate only when you deliberately want an independent perspective.
 
 Never follow up a `working` or `blocked` branch. Never promote the neutral seed itself.

@@ -17,13 +17,15 @@ Usage:
 
 ROLES_DIR contains 2..6 *.md or *.txt role files.
 
-v6.5 background seed-and-fork lifecycle:
+v6.6 background seed-and-fork lifecycle:
   1. `start` dispatches one neutral Opus seed with `claude --bg` and returns immediately.
   2. `status` reports seed/branch states from `claude agents --json --all`.
   3. after seed reaches `done`, `advance` dispatches all role forks as background sessions.
   4. `collect` succeeds only when all branches are done and captures `claude logs`.
   5. a valuable completed branch can be continued with `followup`, which resumes
      the SAME completed expert conversation (sticky advisor) as a new background run.
+  6. `status=idle` does not mean complete; a visible `Worked ... · done` footer is
+     only turn completion until the background lifecycle also reaches `state=done`.
 
 Never call `advance`, `followup`, retry, or duplicate while the relevant session is working or blocked.
 TXT
@@ -46,7 +48,8 @@ SYSTEM_PROMPT="$ROOT_DIR/references/claude/panel-system.md"
 base_args=(
   --model "$MODEL"
   --effort "$EFFORT"
-  --permission-mode plan
+  --permission-mode dontAsk
+  --permission-prompts none
   --tools "Read,Glob,Grep"
   --disallowedTools "mcp__*"
   --append-system-prompt-file "$SYSTEM_PROMPT"
@@ -88,6 +91,7 @@ case "$MODE" in
     COUNT=${#ROLES[@]}
     (( COUNT >= 2 )) || { echo "ERROR: panel requires at least 2 role files; got $COUNT" >&2; exit 2; }
     (( COUNT <= 6 )) || { echo "ERROR: panel hard limit is 6 role files; got $COUNT" >&2; exit 2; }
+    luna_orch_require_fresh_state_tree "$OUTPUT" || exit $?
 
     mkdir -p "$OUTPUT/seed" "$OUTPUT/roles"
     cp "$CONTEXT" "$OUTPUT/context.md"

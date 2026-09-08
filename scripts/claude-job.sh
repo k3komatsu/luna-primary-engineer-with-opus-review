@@ -13,7 +13,10 @@ Usage:
   claude-job.sh stop    STATE_DIR
 
 This script never retries or resumes a job automatically.
-`working` is not failure. `blocked` means inspect logs / attach if human input is needed.
+`status=idle` is not completion; inspect lifecycle `state` and collect only at `done`.
+The log footer `Worked ... · done` means the latest turn rendered, not necessarily
+that the background session is closed. `blocked` means inspect logs / attach if
+human input is needed.
 TXT
 }
 

@@ -11,5 +11,5 @@ for f in luna_worker.toml luna_reviewer.toml sol_advisor.toml astra_expert.toml 
   rm -f "$AGENT_DEST/$f"
 done
 
-echo "Removed Luna Orchestrator v6.5, custom agents, runtime/session metadata, obsolete explorer, and private Ponytail dependency."
+echo "Removed Luna Orchestrator v6.6, custom agents, runtime/session metadata, obsolete explorer, and private Ponytail dependency."
 echo "No Codex config.toml, AGENTS.md, Claude Code installation/authentication, or separately installed Ponytail plugin was modified."

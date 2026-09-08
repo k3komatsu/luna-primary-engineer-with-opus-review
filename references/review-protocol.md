@@ -1,4 +1,4 @@
-# Independent review protocol — v6.5
+# Independent review protocol — v6.6
 
 The review unit is a **coherent completed change**, not an individual edit.
 
@@ -35,9 +35,16 @@ The helper distinguishes:
 - background `job_id`: short ID used by `claude logs`, `claude stop`, and agent state;
 - conversation `sessionId`: full Claude conversation ID used by `claude --resume`.
 
-A re-review may receive a new short background job ID, but its conversation `sessionId` must remain identical. v6.5 stores and verifies this identity. If the sessionId changes unexpectedly, stop and inspect rather than silently accepting a fresh reviewer.
+A re-review may receive a new short background job ID, but its conversation `sessionId` must remain identical. v6.6 stores and verifies this identity. If the sessionId changes unexpectedly, stop and inspect rather than silently accepting a fresh reviewer.
 
-Never resume while the current reviewer run is `working` or `blocked`. `done` is the gate that makes same-session resume safe.
+Never resume while the current reviewer run is `working` or `blocked`. `state=done` is the gate that makes same-session resume safe; `status=idle` is not that gate.
+
+The terminal footer `Worked for ... · done` describes the latest Claude turn,
+not necessarily the background lifecycle. If `claude logs JOB_ID` contains a
+complete review contract but `claude agents` still reports
+`status=idle,state=working`, the turn is complete but the session is still
+open. Do not duplicate or resume it; inspect/close the attached or stale
+session and re-check its lifecycle.
 
 Why same-session re-review is preferred:
 
@@ -127,9 +134,15 @@ Do not count votes:
 ## Background-state discipline
 
 - `working`: wait/continue Primary work; no duplicate and no resume.
+- `status=idle`: no current token/tool activity; it is not a verdict or a completion gate.
 - `blocked`: inspect logs; no duplicate and no resume.
 - `done`: collect result; same-session resume is allowed; fork only for intentional independence.
 - `failed/stopped`: inspect cause; retry only deliberately.
+
+If a blocked reviewer shows `⏸ plan mode on` and a blank input prompt, attach
+to that exact job and send one explicit read-only continuation message. Do not
+approve edits or toggle permissions for a reviewer whose tool set is already
+`Read,Glob,Grep`.
 
 A Codex shell timeout/yield is unrelated to these states.
 
