@@ -57,7 +57,7 @@ claude -p \
   --permission-mode dontAsk --permission-prompts none \
   --tools "Read,Glob,Grep" --disallowedTools "mcp__*" \
   --disable-slash-commands --no-chrome --no-session-persistence \
-  --add-dir "$PWD" \
+  --add-dir "$PWD" -- \
   "Read the supplied packet and return the requested artifact."
 ```
 

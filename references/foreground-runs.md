@@ -25,9 +25,11 @@ packet_path
 stage
 run_exit_code
 result.txt
-initial-result.txt
 rereview-N/
 ```
+
+Dual-review and panel branches additionally archive their first result as
+`initial-result.txt`.
 
 Panel and dual-review state use the same files under `seed/` and one directory
 per role. A result directory is single-use for its initial run. Reuse the same

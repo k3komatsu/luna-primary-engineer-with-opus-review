@@ -57,7 +57,7 @@ run_foreground() {
   local output="$1" exit_file="$2" add_dir="$3" prompt="$4"
   shift 4
   mkdir -p "$(dirname "$output")"
-  luna_primary_engineer_run_foreground "$output" "$exit_file" "${base_args[@]}" --add-dir "$add_dir" "$@" "$prompt"
+  luna_primary_engineer_run_foreground "$output" "$exit_file" "${base_args[@]}" --add-dir "$add_dir" "$@" -- "$prompt"
 }
 
 case "$MODE" in

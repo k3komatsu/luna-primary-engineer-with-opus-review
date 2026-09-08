@@ -41,13 +41,16 @@ case "$MODE" in
     ;;
   collect)
     [[ $# -le 1 ]] || { usage >&2; exit 2; }
-    OUT="${1:-$STATE_DIR/result.txt}"
     [[ "$(cat "$STATE_DIR/stage" 2>/dev/null || true)" == "done" ]] || {
       echo "ERROR: foreground run is not complete: $STATE_DIR" >&2
       exit 10
     }
-    cp "$STATE_DIR/result.txt" "$OUT"
-    cat "$OUT"
+    if [[ $# -eq 0 ]]; then
+      cat "$STATE_DIR/result.txt"
+    else
+      cp "$STATE_DIR/result.txt" "$1"
+      cat "$1"
+    fi
     ;;
   stop)
     echo "ERROR: foreground runs have no asynchronous stop operation; press Ctrl-C in the invoking terminal." >&2

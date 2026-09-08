@@ -59,7 +59,7 @@ run_foreground() {
   local output="$1" exit_file="$2" add_dir="$3" prompt="$4"
   shift 4
   mkdir -p "$(dirname "$output")"
-  luna_primary_engineer_run_foreground "$output" "$exit_file" "${base_args[@]}" --add-dir "$add_dir" "$@" "$prompt"
+  luna_primary_engineer_run_foreground "$output" "$exit_file" "${base_args[@]}" --add-dir "$add_dir" "$@" -- "$prompt"
 }
 
 show_result() {
@@ -81,8 +81,9 @@ collect_review() {
 
 run_review() {
   local state_dir="$1" prompt="$2" rc=0
+  local add_dir="${3:-$state_dir}"
   printf 'running\n' > "$state_dir/stage"
-  if run_foreground "$state_dir/result.txt" "$state_dir/run_exit_code" "$state_dir" "$prompt"; then
+  if run_foreground "$state_dir/result.txt" "$state_dir/run_exit_code" "$add_dir" "$prompt"; then
     rc=0
   else
     rc=$?
@@ -155,10 +156,13 @@ case "$MODE" in
     printf 'rereview-%s\n' "$N" > "$STATE_DIR/current_round"
     DELTA_ABS="$(cd "$ROUND" && pwd)/fix-delta.md"
     PREVIOUS_ABS="$(cd "$ROUND" && pwd)/previous-result.txt"
-    if ! run_review "$ROUND" \
-      "This is a fresh foreground re-review. Read the original review packet at: $PACKET_ABS , the Primary's fix delta at: $DELTA_ABS , and the previous review result at: $PREVIOUS_ABS . Re-check each relevant finding, inspect regressions introduced by the fixes, and return the complete review contract. Do not ask questions; finish with the evidence available."; then
-      printf 'failed\n' > "$STATE_DIR/stage"
-      exit "$(cat "$ROUND/run_exit_code" 2>/dev/null || printf '1')"
+    if run_review "$ROUND" \
+      "This is a fresh foreground re-review. Read the original review packet at: $PACKET_ABS , the Primary's fix delta at: $DELTA_ABS , and the previous review result at: $PREVIOUS_ABS . Re-check each relevant finding, inspect regressions introduced by the fixes, and return the complete review contract. Do not ask questions; finish with the evidence available." \
+      "$STATE_DIR"; then
+      :
+    else
+      resume_rc=$?
+      exit "$resume_rc"
     fi
     cp "$ROUND/result.txt" "$STATE_DIR/result.txt"
     cp "$ROUND/run_exit_code" "$STATE_DIR/run_exit_code"
