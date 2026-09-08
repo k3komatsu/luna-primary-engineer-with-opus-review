@@ -11,6 +11,12 @@ A software-development workflow for Codex Desktop and Codex CLI. It uses GPT-5.6
 - Users who need a Codex-only fallback when Claude is unavailable
 - Projects that benefit from focused changes without unnecessary abstractions or dependencies
 
+## Why this workflow exists
+
+This workflow started from a practical setup: Codex is the main development environment, and Claude Team (Standard) is also available and worth putting to use. I wanted to keep the Codex Plus usage allowance focused on implementation, but sending a Luna implementation to Terra or Sol for review can consume a substantial part of the five-hour usage window even when the review is the only extra work.
+
+The resulting split is simple: Codex Luna handles investigation, implementation, testing, and integration, while Claude Code Opus provides an independent, read-only review when needed. Codex remains the center of the workflow, with a second model added for another perspective.
+
 ## Setup
 
 ### Requirements
