@@ -12,8 +12,10 @@ Usage:
   claude-job.sh logs    STATE_DIR
   claude-job.sh collect STATE_DIR [OUTPUT_FILE]
 
-Claude runs are foreground-only. These commands inspect a completed result
-directory; stop/attach/agent lifecycle operations are intentionally absent.
+Claude runs are foreground-only and do not depend on the Claude background
+daemon. These commands inspect a result directory. A review state with
+`stage=blocked` and `blocked_reason=network` must be retried with
+`claude-review.sh retry STATE_DIR` from a network-enabled command environment.
 Use Ctrl-C in the invoking terminal to interrupt a live foreground run.
 TXT
 }
@@ -42,7 +44,7 @@ case "$MODE" in
   collect)
     [[ $# -le 1 ]] || { usage >&2; exit 2; }
     [[ "$(cat "$STATE_DIR/stage" 2>/dev/null || true)" == "done" ]] || {
-      echo "ERROR: foreground run is not complete: $STATE_DIR" >&2
+      echo "ERROR: run is not complete: $STATE_DIR" >&2
       exit 10
     }
     if [[ $# -eq 0 ]]; then

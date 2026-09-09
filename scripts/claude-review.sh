@@ -12,6 +12,7 @@ Usage:
   claude-review.sh start        REVIEW_PACKET [STATE_DIR] [LABEL]
   claude-review.sh status       STATE_DIR
   claude-review.sh collect      STATE_DIR
+  claude-review.sh retry        STATE_DIR
   claude-review.sh resume       STATE_DIR FIX_DELTA
 
   claude-review.sh dual-start   REVIEW_PACKET [GROUP_DIR]
@@ -19,10 +20,11 @@ Usage:
   claude-review.sh dual-advance GROUP_DIR
   claude-review.sh dual-collect GROUP_DIR
 
-Claude is always run in the foreground with `claude -p`. Ordinary `start`
-creates a persistent session ID and `resume` continues that session. Dual
-review calls remain independent and non-persistent. All run commands wait for
-Claude to finish and write result.txt; status/collect only inspect those files.
+Claude is run synchronously in the foreground with `claude -p`; no Claude
+daemon/background job is used. Ordinary `start` creates a persistent session
+ID and `resume` continues that session. Dual review calls remain independent
+and non-persistent. Network/API failures are recorded as `stage=blocked`, so
+`retry` can re-use the same state and session after network access is restored.
 TXT
 }
 
@@ -71,6 +73,10 @@ show_result() {
 collect_review() {
   local state_dir="$1" stage
   stage="$(cat "$state_dir/stage" 2>/dev/null || true)"
+  if [[ "$stage" == blocked ]]; then
+    echo "ERROR: review is blocked by the network/API path; use retry on the same state: $state_dir" >&2
+    return 11
+  fi
   [[ "$stage" == "done" ]] || { echo "ERROR: review is not complete: $state_dir (stage=${stage:-unknown})" >&2; return 10; }
   if ! luna_primary_engineer_review_contract_complete "$state_dir/result.txt"; then
     echo "ERROR: review result lacks the complete review contract." >&2
@@ -82,6 +88,7 @@ collect_review() {
 run_review() {
   local state_dir="$1" prompt="$2" add_dir="$3" rc=0
   shift 3
+  rm -f "$state_dir/blocked_reason"
   printf 'running\n' > "$state_dir/stage"
   if run_foreground "$state_dir/result.txt" "$state_dir/run_exit_code" "$add_dir" "$prompt" "$@"; then
     rc=0
@@ -89,18 +96,83 @@ run_review() {
     rc=$?
   fi
   if (( rc != 0 )); then
+    if luna_primary_engineer_review_network_failure "$state_dir/result.txt"; then
+      printf 'blocked\n' > "$state_dir/stage"
+      printf 'network\n' > "$state_dir/blocked_reason"
+      echo "ERROR: Claude review reached a network/API timeout after launch; this is not a code-review failure and no Luna fallback is allowed." >&2
+      echo "ERROR: Re-run the same state with network-enabled command execution: bash scripts/claude-review.sh retry $state_dir" >&2
+      cat "$state_dir/result.txt" >&2 || true
+      return 11
+    fi
     printf 'failed\n' > "$state_dir/stage"
     echo "ERROR: Claude review failed after launch; this is not a preflight fallback condition. Inspect the state and wait for an explicit decision." >&2
     cat "$state_dir/result.txt" >&2 || true
     return "$rc"
   fi
   if ! luna_primary_engineer_review_contract_complete "$state_dir/result.txt"; then
+    if luna_primary_engineer_review_network_failure "$state_dir/result.txt"; then
+      printf 'blocked\n' > "$state_dir/stage"
+      printf 'network\n' > "$state_dir/blocked_reason"
+      echo "ERROR: Claude review output shows a network/API timeout; preserve this state and retry it with network access." >&2
+      return 11
+    fi
     printf 'failed\n' > "$state_dir/stage"
     echo "ERROR: Claude completed but did not return the complete review contract." >&2
     cat "$state_dir/result.txt" >&2 || true
     return 18
   fi
   printf 'done\n' > "$state_dir/stage"
+}
+
+retry_initial_review() {
+  local state_dir="$1" parent_stage session_id packet_abs review_cwd retry_dir n rc
+  parent_stage="$(cat "$state_dir/stage" 2>/dev/null || true)"
+  if [[ "$parent_stage" == failed && ! -f "$state_dir/current_round" ]] && \
+    luna_primary_engineer_review_network_failure "$state_dir/result.txt"; then
+    # Make states produced by older helper versions retryable without asking
+    # the caller to edit their state directory by hand.
+    printf 'blocked\n' > "$state_dir/stage"
+    printf 'network\n' > "$state_dir/blocked_reason"
+    parent_stage=blocked
+  fi
+  [[ "$parent_stage" == blocked && "$(cat "$state_dir/blocked_reason" 2>/dev/null || true)" == network ]] || {
+    echo "ERROR: only a network-blocked initial review can use retry: $state_dir" >&2
+    return 10
+  }
+  [[ ! -f "$state_dir/current_round" ]] || {
+    echo "ERROR: this is a blocked re-review; rerun resume with the same fix delta: $state_dir" >&2
+    return 10
+  }
+  session_id="$(cat "$state_dir/session_id" 2>/dev/null || true)"
+  [[ "$session_id" =~ ^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$ ]] || {
+    echo "ERROR: review state has no resumable Claude session ID: $state_dir" >&2
+    return 2
+  }
+  packet_abs="$(cat "$state_dir/packet_path" 2>/dev/null || true)"
+  [[ -f "$packet_abs" ]] || { echo "ERROR: original review packet not found: $packet_abs" >&2; return 2; }
+  review_cwd="$(cat "$state_dir/cwd" 2>/dev/null || true)"
+  [[ -d "$review_cwd" ]] || { echo "ERROR: original review directory is unavailable: $review_cwd" >&2; return 2; }
+
+  n=1
+  while [[ -e "$state_dir/network-retry-$n" ]]; do n=$((n + 1)); done
+  retry_dir="$state_dir/network-retry-$n"
+  mkdir -p "$retry_dir"
+  [[ -f "$state_dir/result.txt" ]] && cp "$state_dir/result.txt" "$retry_dir/previous-result.txt"
+  printf '%s\n' "$session_id" > "$retry_dir/session_id"
+  printf '%s\n' "$packet_abs" > "$retry_dir/packet_path"
+
+  if (cd "$review_cwd" && run_review "$state_dir" \
+    "Retry this same read-only review in the existing Claude conversation after a transient network failure. Read the review packet at: $packet_abs . Inspect repository files only as needed. Do not ask questions; finish with the complete review contract from your system instructions." \
+    "$state_dir" --resume "$session_id"); then
+    printf 'done\n' > "$state_dir/stage"
+    cat "$state_dir/result.txt"
+    return 0
+  else
+    rc=$?
+    printf '%s\n' "$rc" > "$retry_dir/run_exit_code"
+    [[ -f "$state_dir/result.txt" ]] && cp "$state_dir/result.txt" "$retry_dir/result.txt"
+    return "$rc"
+  fi
 }
 
 case "$MODE" in
@@ -122,7 +194,7 @@ case "$MODE" in
     printf '%s\n' "$SESSION_ID" > "$STATE_DIR/session_id"
     printf '%s\n' "$PACKET_ABS" > "$STATE_DIR/packet_path"
     run_review "$STATE_DIR" \
-      "This is a foreground read-only review. Read the review packet at: $PACKET_ABS . Inspect repository files only as needed. Do not ask the Primary Engineer questions; if evidence is incomplete, record the uncertainty and finish. Return the complete review contract from your system instructions." \
+      "This is a synchronous read-only review. Read the review packet at: $PACKET_ABS . Inspect repository files only as needed. Do not ask the Primary Engineer questions; if evidence is incomplete, record the uncertainty and finish. Return the complete review contract from your system instructions." \
       "$STATE_DIR" --session-id "$SESSION_ID"
     show_result "$STATE_DIR"
     ;;
@@ -135,6 +207,14 @@ case "$MODE" in
   collect)
     [[ $# -eq 1 ]] || { usage >&2; exit 2; }
     collect_review "$1"
+    ;;
+
+  retry)
+    require_claude
+    [[ $# -eq 1 ]] || { usage >&2; exit 2; }
+    STATE_INPUT="$1"
+    [[ -d "$STATE_INPUT" ]] || { echo "ERROR: review state directory not found: $STATE_INPUT" >&2; exit 2; }
+    retry_initial_review "$(cd "$STATE_INPUT" && pwd)"
     ;;
 
   resume)
@@ -151,14 +231,32 @@ case "$MODE" in
       exit 2
     }
     PARENT_STAGE="$(cat "$STATE_DIR/stage" 2>/dev/null || true)"
-    [[ -f "$STATE_DIR/result.txt" && ( "$PARENT_STAGE" == "done" || "$PARENT_STAGE" == "failed" ) ]] || {
-      echo "ERROR: completed foreground review not found: $STATE_DIR" >&2
+    LEGACY_ROUND="$(cat "$STATE_DIR/current_round" 2>/dev/null || true)"
+    if [[ "$PARENT_STAGE" == failed && "$LEGACY_ROUND" == rereview-* ]] && \
+      luna_primary_engineer_review_network_failure "$STATE_DIR/$LEGACY_ROUND/result.txt"; then
+      # Older foreground runs marked transport failures as failed. Migrate only
+      # that recognizable network case, preserving the same re-review round.
+      printf 'blocked\n' > "$STATE_DIR/stage"
+      printf 'network\n' > "$STATE_DIR/blocked_reason"
+      printf 'blocked\n' > "$STATE_DIR/$LEGACY_ROUND/stage"
+      printf 'network\n' > "$STATE_DIR/$LEGACY_ROUND/blocked_reason"
+      PARENT_STAGE=blocked
+    fi
+    [[ -f "$STATE_DIR/result.txt" && ( "$PARENT_STAGE" == "done" || "$PARENT_STAGE" == "failed" || "$PARENT_STAGE" == "blocked" ) ]] || {
+      echo "ERROR: completed review or retryable blocked review not found: $STATE_DIR" >&2
       exit 10
     }
     if [[ "$PARENT_STAGE" == "failed" ]]; then
       FAILED_ROUND="$(cat "$STATE_DIR/current_round" 2>/dev/null || true)"
       [[ "$FAILED_ROUND" == rereview-* && "$(cat "$STATE_DIR/$FAILED_ROUND/stage" 2>/dev/null || true)" == "failed" ]] || {
         echo "ERROR: failed re-review state is not retryable: $STATE_DIR" >&2
+        exit 10
+      }
+    fi
+    if [[ "$PARENT_STAGE" == "blocked" ]]; then
+      BLOCKED_ROUND="$(cat "$STATE_DIR/current_round" 2>/dev/null || true)"
+      [[ "$BLOCKED_ROUND" == rereview-* && "$(cat "$STATE_DIR/$BLOCKED_ROUND/stage" 2>/dev/null || true)" == "blocked" && "$(cat "$STATE_DIR/$BLOCKED_ROUND/blocked_reason" 2>/dev/null || true)" == "network" ]] || {
+        echo "ERROR: blocked initial review must use retry; blocked re-review state is not retryable: $STATE_DIR" >&2
         exit 10
       }
     fi
@@ -173,20 +271,26 @@ case "$MODE" in
     REVIEW_CWD="$(cat "$STATE_DIR/cwd" 2>/dev/null || true)"
     [[ -d "$REVIEW_CWD" ]] || { echo "ERROR: original review directory is unavailable: $REVIEW_CWD" >&2; exit 2; }
 
-    N=1
-    while [[ -e "$STATE_DIR/rereview-$N" ]]; do N=$((N + 1)); done
-    ROUND="$STATE_DIR/rereview-$N"
-    mkdir -p "$ROUND"
-    cp "$DELTA" "$ROUND/fix-delta.md"
-    cp "$STATE_DIR/result.txt" "$ROUND/previous-result.txt"
-    printf '%s\n' "$PACKET_ABS" > "$ROUND/packet_path"
-    printf '%s\n' "$SESSION_ID" > "$ROUND/session_id"
-    printf 'rereview-%s\n' "$N" > "$STATE_DIR/current_round"
+    if [[ "$PARENT_STAGE" == "blocked" ]]; then
+      N="${BLOCKED_ROUND#rereview-}"
+      ROUND="$STATE_DIR/$BLOCKED_ROUND"
+      cp "$DELTA" "$ROUND/fix-delta.md"
+    else
+      N=1
+      while [[ -e "$STATE_DIR/rereview-$N" ]]; do N=$((N + 1)); done
+      ROUND="$STATE_DIR/rereview-$N"
+      mkdir -p "$ROUND"
+      cp "$DELTA" "$ROUND/fix-delta.md"
+      cp "$STATE_DIR/result.txt" "$ROUND/previous-result.txt"
+      printf '%s\n' "$PACKET_ABS" > "$ROUND/packet_path"
+      printf '%s\n' "$SESSION_ID" > "$ROUND/session_id"
+      printf 'rereview-%s\n' "$N" > "$STATE_DIR/current_round"
+    fi
     DELTA_ABS="$(cd "$ROUND" && pwd)/fix-delta.md"
     PREVIOUS_ABS="$ROUND/previous-result.txt"
     printf 'running\n' > "$STATE_DIR/stage"
     if (cd "$REVIEW_CWD" && run_review "$ROUND" \
-      "This is a sticky foreground re-review in the same Claude conversation. Read the original review packet at: $PACKET_ABS , the previous review result at: $PREVIOUS_ABS , and the Primary's fix delta at: $DELTA_ABS . Re-check each relevant finding from the previous review, inspect regressions introduced by the fixes, and return the complete review contract. Do not ask questions; finish with the evidence available." \
+      "This is a sticky synchronous re-review in the same Claude conversation. Read the original review packet at: $PACKET_ABS , the previous review result at: $PREVIOUS_ABS , and the Primary's fix delta at: $DELTA_ABS . Re-check each relevant finding from the previous review, inspect regressions introduced by the fixes, and return the complete review contract. Do not ask questions; finish with the evidence available." \
       "$STATE_DIR" --resume "$SESSION_ID"); then
       :
     else
@@ -196,12 +300,19 @@ case "$MODE" in
       else
         printf '%s\n' "$resume_rc" > "$STATE_DIR/run_exit_code"
       fi
-      printf 'failed\n' > "$ROUND/stage"
-      printf 'failed\n' > "$STATE_DIR/stage"
+      if [[ "$(cat "$ROUND/stage" 2>/dev/null || true)" == blocked ]]; then
+        printf 'network\n' > "$ROUND/blocked_reason"
+        printf 'network\n' > "$STATE_DIR/blocked_reason"
+        printf 'blocked\n' > "$STATE_DIR/stage"
+      else
+        printf 'failed\n' > "$ROUND/stage"
+        printf 'failed\n' > "$STATE_DIR/stage"
+      fi
       exit "$resume_rc"
     fi
     cp "$ROUND/result.txt" "$STATE_DIR/result.txt"
     cp "$ROUND/run_exit_code" "$STATE_DIR/run_exit_code"
+    rm -f "$STATE_DIR/blocked_reason"
     printf 'done\n' > "$STATE_DIR/stage"
     show_result "$STATE_DIR"
     ;;

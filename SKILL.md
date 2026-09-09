@@ -36,9 +36,12 @@ architecture boundaries.
 4. Primary runs focused checks and tests.
 5. Before a review, run the Claude preflight. If it passes, run one read-only
    Claude review with `scripts/claude-review.sh`.
-6. The review command waits for Claude to finish and writes `result.txt`. If
-   the shell tool yields a session ID, keep polling that same shell session;
-   do not start another reviewer while it is alive.
+6. The ordinary review is a synchronous `claude -p` call and writes
+   `result.txt`. If the shell tool yields a session ID, keep polling that same
+   shell session; do not start another reviewer while it is alive. If Claude
+   exits with an API/proxy/network timeout, the helper records
+   `stage=blocked` and preserves the same state/session. Re-run `retry` for
+   that state with network-enabled command execution; do not create `state2`.
 7. Fix concrete findings, then use `resume` with a fix delta. This continues the
    same Claude review session in a new foreground turn, so the reviewer keeps
    its prior findings without starting a separate review conversation.
@@ -62,19 +65,30 @@ terminal state. While it is running or its state is unknown:
 - wait on the same shell session with `write_stdin` when one was returned, or
   check the same state directory at a natural interval.
 
-Only a completed `stage=done` may be collected. If the launched Claude call
-eventually reaches `stage=failed`, report that terminal failure and stop for a
-user decision; do not silently spend another reviewer call. The Luna fallback
+Only a completed `stage=done` may be collected. A `stage=blocked` with
+`blocked_reason=network` means the Claude process exited before producing a
+review because the current command environment could not reach Anthropic. It
+is not a review failure: preserve the state, obtain network-enabled command
+execution, and run `bash scripts/claude-review.sh retry STATE_DIR` using the
+same session. Do not invoke Luna fallback or create a new state. A genuine
+non-network `stage=failed` is terminal and should be reported for a user
+decision; do not silently spend another reviewer call. The Luna fallback
 requires both literal markers `LUNA_CLAUDE_PREFLIGHT_FALLBACK` and
 `CLAUDE_NOT_LAUNCHED`, as described in `codex-agents/luna_reviewer.toml`.
 
-## Foreground Claude contract
+In Codex sandbox environments, successful `claude auth status` does not prove
+that the Anthropic API is reachable. When the helper reports a network block,
+run the retry command through a network-enabled/escalated command execution if
+available. Changing `API_TIMEOUT_MS` or switching to an interactive Claude TTY
+does not repair a blocked outbound route.
+
+## Synchronous Claude contract
 
 All repository review and advisory helpers use `claude -p` and wait for the
 process to exit. They do not dispatch asynchronous sessions, query job
 registries, attach to terminals, or depend on daemon sockets. Ordinary review
-`start` stores an explicit Claude session ID and `resume` reuses it; dual and
-panel calls intentionally use non-persistent sessions for independence.
+`start` stores an explicit Claude session ID and `resume`/`retry` reuse it; dual
+and panel calls intentionally use non-persistent sessions for independence.
 
 The read-only invocation uses:
 
@@ -92,18 +106,21 @@ The initial ordinary review adds `--session-id <uuid>`; a re-review replaces
 that with `--resume <uuid>`. Independent dual-review and panel calls add
 `--no-session-persistence` instead.
 
-Foreground Claude calls default the API request timeout, stream idle,
+Synchronous Claude calls default the API request timeout, stream idle,
 byte-stream idle, and first-byte timeout variables to `600000` (10 minutes)
 when unset, and preserve explicitly supplied values.
 
 The helper appends the role system prompt and captures combined output plus the
 exit code. `status` and `collect` inspect files already written by that finished
-run. Press Ctrl-C in the invoking terminal to interrupt a live call.
+run. A network/API error is stored as `stage=blocked` rather than being
+presented as a code-review result. Press Ctrl-C in the invoking terminal to
+interrupt a live call.
 
-Do not use asynchronous Claude execution for this skill. Do not use Claude
-agent registries or terminal-log collection as a completion signal. A saved
-session ID is used only to continue an ordinary review conversation; the
-result file and process exit code remain the completion signals.
+Do not use asynchronous Claude execution or Claude daemon registries for this
+skill. A saved session ID is used to continue an ordinary review conversation;
+the result file and process exit code remain the completion signals. The
+network-block marker exists to preserve the state for an explicitly
+network-enabled retry.
 
 ## Review result contract
 
@@ -127,11 +144,14 @@ re-check the previous findings and report OPEN/CLOSED status in
 bash scripts/claude-review.sh start REVIEW_PACKET STATE_DIR reviewer-1
 bash scripts/claude-review.sh status STATE_DIR
 bash scripts/claude-review.sh collect STATE_DIR
+bash scripts/claude-review.sh retry STATE_DIR
 bash scripts/claude-review.sh resume STATE_DIR FIX_DELTA
 ```
 
-`start` blocks until the review completes. `status` reports the stored stage;
-it does not poll Claude. `resume` continues the stored Claude session in a new
+`start` blocks until the review completes or the synchronous process exits.
+`status` reports the stored stage; it does not poll Claude. If the process
+exits because the API/network path is blocked, `retry` keeps the same state and
+Claude session. `resume` continues the stored Claude session in a new
 foreground turn with the fix delta.
 
 ## High-risk dual review
@@ -211,8 +231,8 @@ Primary.
 ```text
 Luna Primary + Ponytail
   -> focused checks
-  -> optional foreground Claude review
-  -> Luna fixes and sticky foreground re-review
+  -> optional synchronous Claude review
+  -> Luna fixes and sticky synchronous re-review
   -> accepted result
 ```
 

@@ -1,12 +1,12 @@
 Luna Primary Engineer v6.6
 - Primary: Luna Max/Fast + Ponytail FULL
-- Ordinary review: one Claude Opus foreground reviewer with a persisted session, xhigh effort, read-only, no --bare
+- Ordinary review: one Claude Opus synchronous reviewer with a persisted session, xhigh effort, read-only, no --bare
 - Claude calls: synchronous `claude -p`, captured output, explicit exit-code and result-file checks
-- Re-review: the same Claude session continues in a foreground turn with the fix delta
+- Re-review: the same Claude session continues in a synchronous foreground turn with the fix delta
 - State discipline: `stage=done` and a complete result contract are the collection gate
 - No job registry, terminal-log parsing, or daemon/socket dependency; ordinary review session IDs are stored explicitly for re-review
 - Permission discipline: dontAsk + permission-prompts none + Read/Glob/Grep + explicit MCP deny
-- Verification: `bash scripts/self-test.sh` covers result contracts, fresh-state guards, and sticky re-review failure/retry; `scripts/doctor.sh` runs it
+- Verification: `bash scripts/self-test.sh` covers result contracts, fresh-state guards, sticky re-review failure/retry, and network-block retry; `scripts/doctor.sh` runs it
 - Dual high-risk review: neutral foreground Opus seed -> two blind independent foreground reviewers
 - Review fallback: Luna Max/Standard, read-only, no Ponytail
 - Difficult-task advisory panel: neutral foreground Opus seed -> 2-6 role-diverse foreground calls, sequentially

@@ -85,7 +85,7 @@ In normal use, ask the Codex session, “Have Opus review this change too.” If
 
 Re-reviews continue the Opus session used for the initial review.
 
-Reviews can take several minutes. To avoid cutting off a long thinking pause, Claude stream timeouts default to 10 minutes. For advanced configuration or manual review commands, see the [Claude integration reference](references/claude-integration.md) and the [foreground runs reference](references/foreground-runs.md).
+Reviews can take several minutes. Claude API and stream timeouts default to 10 minutes. If the Codex execution environment cannot reach the Anthropic API, the workflow preserves the same review session instead of treating the transport error as a review result, and retries it from a network-enabled environment. See the [Claude integration reference](references/claude-integration.md) for details.
 
 ## Troubleshooting
 
@@ -110,3 +110,13 @@ export LUNA_PRIMARY_ENGINEER_CLAUDE=off
 ```
 
 If `ANTHROPIC_API_KEY` is set, Claude Code may use an API-billed authentication path. Make sure that is the authentication method you intend to use.
+
+### Review stops with `Request timed out`
+
+`claude auth status` can succeed even when the Codex sandbox cannot reach the Anthropic API. If the review state is `stage=blocked` with `blocked_reason=network`, retry the same state from a network-enabled command environment:
+
+```bash
+bash scripts/claude-review.sh retry STATE_DIR
+```
+
+Switching to an interactive TTY or the Claude daemon does not remove an execution environment's network restriction.

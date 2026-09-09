@@ -106,6 +106,18 @@ luna_primary_engineer_run_foreground() {
   return "$rc"
 }
 
+# A foreground Claude process can exit because the caller's network path cannot
+# reach Anthropic, even though Claude auth succeeded. Keep this distinct from a
+# reviewer finding or a real Claude failure so the caller can retry the same
+# state/session after network access is restored.
+luna_primary_engineer_review_network_failure() {
+  local file="$1"
+  [[ -f "$file" ]] || return 1
+  grep -Eiq \
+    'Request timed out|api\.anthropic\.com|NODE_EXTRA_CA_CERTS|proxy[^[:space:]]*[[:space:]]+intercept|ECONNRESET|ETIMEDOUT|ENETUNREACH|EAI_AGAIN' \
+    "$file"
+}
+
 luna_primary_engineer_review_contract_complete() {
   local file="$1" heading
   [[ -f "$file" ]] || return 1
@@ -115,14 +127,16 @@ luna_primary_engineer_review_contract_complete() {
 }
 
 luna_primary_engineer_print_state_dir() {
-  local state_dir="$1" stage rc
+  local state_dir="$1" stage rc reason
   [[ -d "$state_dir" ]] || { echo "ERROR: missing state directory: $state_dir" >&2; return 2; }
   stage="$(cat "$state_dir/stage" 2>/dev/null || printf 'unknown')"
   rc="$(cat "$state_dir/run_exit_code" 2>/dev/null || printf '')"
-  printf 'STATE=%s\nEXIT_CODE=%s\nSTATE_DIR=%s\n' "$stage" "$rc" "$state_dir"
+  reason="$(cat "$state_dir/blocked_reason" 2>/dev/null || printf '')"
+  printf 'STATE=%s\nEXIT_CODE=%s\nBLOCKED_REASON=%s\nSTATE_DIR=%s\n' "$stage" "$rc" "$reason" "$state_dir"
   case "$stage" in
     done) return 0 ;;
     running|seed_running|branches_running) return 10 ;;
+    blocked) return 11 ;;
     failed) return 12 ;;
     *) return 14 ;;
   esac

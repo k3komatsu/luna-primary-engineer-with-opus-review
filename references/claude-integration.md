@@ -1,4 +1,4 @@
-# Claude Code integration — foreground mode
+# Claude Code integration — synchronous mode
 
 Claude is optional. When available, Opus provides independent read-only review
 and focused reasoning without becoming the implementation owner.
@@ -26,7 +26,7 @@ Ordinary review calls add `--session-id <uuid>` on the initial turn and
 `--resume <uuid>` on re-review turns. Independent dual-review and panel calls
 add `--no-session-persistence`.
 
-Foreground calls default `API_TIMEOUT_MS`, the stream idle, byte-stream idle,
+Synchronous calls default `API_TIMEOUT_MS`, the stream idle, byte-stream idle,
 and first-byte timeouts to `600000` (10 minutes) when the corresponding Claude
 variables are unset. This allows extended Opus thinking pauses and slow API
 requests to finish instead of being cut off by a shorter local default; set
@@ -60,8 +60,12 @@ the helpers.
 
 `start`, `resume`, `dual-start`, and `dual-advance` wait for Claude and write
 their result files before returning. If the shell tool yields a session ID,
-poll that same session until it exits. A shell/tool timeout or `Request timed
-out` while waiting does not authorize a duplicate or Luna fallback. `status`
+poll that same session until it exits. A shell/tool timeout while the process is
+still alive does not authorize a duplicate or Luna fallback. When Claude exits
+with `Request timed out` or an Anthropic API/proxy error, the ordinary helper
+stores `stage=blocked` and `blocked_reason=network`; it does not turn that
+transport failure into a review result. Run `claude-review.sh retry STATE_DIR`
+with network-enabled command execution to retry the same session. `status`
 only reads the state directory; `collect` validates and prints stored output.
 
 An ordinary review is accepted only when all headings are present:
@@ -74,6 +78,9 @@ TEST_GAPS:
 PREVIOUS_FINDINGS:
 ```
 
-Ordinary re-review uses the stored Claude session ID and continues the same
-conversation with the new fix delta. Panel follow-up remains a fresh foreground
-call and passes the prior result and new question as explicit context.
+Ordinary `retry` and re-review use the stored Claude session ID and continue the
+same conversation. Panel follow-up remains a fresh foreground call and passes
+the prior result and new question as explicit context. An interactive Claude
+TTY does not bypass the command environment's network policy, and this
+workflow deliberately avoids the Claude background daemon because it is not a
+reliable lifecycle dependency here.

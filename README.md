@@ -85,7 +85,7 @@ Ponytailは、必要な変更だけに集中し、不要な抽象化や依存を
 
 修正後の再レビューは、初回レビューのOpusセッションを続けて実行します。
 
-レビューには数分かかることがあります。長い思考中に切断されないよう、Claudeのストリーム待機時間は既定で10分です。細かい設定や手動実行が必要な場合は、[Claude連携のリファレンス](references/claude-integration.md)と[フォアグラウンド実行のリファレンス](references/foreground-runs.md)を参照してください。
+レビューには数分かかることがあります。ClaudeのAPI・ストリーム待機時間は既定で10分です。Codexの実行環境からAnthropic APIへ接続できない場合は、レビューを失敗扱いにせず同じセッションを保持し、ネットワーク利用可能な環境で再試行します。詳細は[Claude連携のリファレンス](references/claude-integration.md)を参照してください。
 
 ## 困ったとき
 
@@ -110,3 +110,13 @@ export LUNA_PRIMARY_ENGINEER_CLAUDE=off
 ```
 
 `ANTHROPIC_API_KEY`が設定されている場合、Claude CodeがAPI課金の認証経路を使う可能性があります。意図した認証方法か確認してください。
+
+### `Request timed out` でレビューが止まる
+
+`claude auth status` が成功しても、CodexのsandboxからAnthropic APIへ接続できるとは限りません。レビュー state が `stage=blocked`、`blocked_reason=network` になった場合は、ネットワーク利用可能なコマンド実行環境で同じ state を再試行します。
+
+```bash
+bash scripts/claude-review.sh retry STATE_DIR
+```
+
+対話型TTYやClaude daemonへ切り替えても、実行環境のネットワーク制限は解決しません。

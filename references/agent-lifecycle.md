@@ -8,8 +8,9 @@ review routing, integration, and user communication.
 ## Claude review
 
 ```text
-FOREGROUND REVIEW -> DONE -> FINDINGS
-FINDINGS -> PRIMARY_FIX -> STICKY FOREGROUND RE-REVIEW
+SYNCHRONOUS REVIEW -> DONE -> FINDINGS
+SYNCHRONOUS REVIEW -> BLOCKED(network) -> SAME-STATE RETRY
+FINDINGS -> PRIMARY_FIX -> STICKY SYNCHRONOUS RE-REVIEW
 RE-REVIEW -> DONE -> FIX AGAIN? -> STICKY RE-REVIEW
 PASS/ACCEPTED -> ARCHIVE RESULT FILES
 ```
@@ -17,6 +18,9 @@ PASS/ACCEPTED -> ARCHIVE RESULT FILES
 The process exit code and stored result files are the completion signals. An
 ordinary review also stores a Claude session ID so `resume` can continue the
 same conversation; this is explicit state, not a background job registry.
+When the process exits with a transport error, `stage=blocked` preserves the
+same session for retry; it is not a review failure and does not authorize a
+fallback or a new state.
 
 ## High-risk dual review
 
