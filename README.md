@@ -85,7 +85,7 @@ Ponytailは、必要な変更だけに集中し、不要な抽象化や依存を
 
 修正後の再レビューは、初回レビューのOpusセッションを続けて実行します。
 
-レビューには数分かかることがあります。細かい設定や手動実行が必要な場合は、[Claude連携のリファレンス](references/claude-integration.md)と[フォアグラウンド実行のリファレンス](references/foreground-runs.md)を参照してください。
+レビューには数分かかることがあります。長い思考中に切断されないよう、Claudeのストリーム待機時間は既定で10分です。細かい設定や手動実行が必要な場合は、[Claude連携のリファレンス](references/claude-integration.md)と[フォアグラウンド実行のリファレンス](references/foreground-runs.md)を参照してください。
 
 ## 困ったとき
 

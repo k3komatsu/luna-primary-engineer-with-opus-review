@@ -26,6 +26,12 @@ Ordinary review calls add `--session-id <uuid>` on the initial turn and
 `--resume <uuid>` on re-review turns. Independent dual-review and panel calls
 add `--no-session-persistence`.
 
+Foreground calls default the stream idle, byte-stream idle, and first-byte
+timeouts to `600000` (10 minutes) when the corresponding Claude variables are
+unset. This allows extended Opus thinking pauses to finish instead of being
+cut off by a shorter local default; set the variables explicitly to choose
+other positive millisecond values.
+
 The helper reads the role system prompt and passes it through
 `--append-system-prompt`. `--add-dir` grants read access to the packet/state
 directory. Reviewers do not edit files, implement fixes, use MCP tools, or

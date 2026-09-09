@@ -65,6 +65,10 @@ claude() {
   if [[ "${1:-}" == auth && "${2:-}" == status ]]; then
     return 0
   fi
+  printf '%s\n' \
+    "idle-timeout=${CLAUDE_STREAM_IDLE_TIMEOUT_MS:-unset}" \
+    "byte-idle-timeout=${CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS:-unset}" \
+    "first-byte-timeout=${CLAUDE_STREAM_FIRST_BYTE_TIMEOUT_MS:-unset}" >> "$MOCK_LOG"
   printf '%s\n' "$@" >> "$MOCK_LOG"
   if [[ "${MOCK_FAIL:-0}" == 1 ]]; then
     return 7
@@ -80,6 +84,9 @@ export -f claude
 export LUNA_PRIMARY_ENGINEER_CLAUDE=on
 MOCK_LOG="$SMOKE_DIR/claude-args.log"
 MOCK_FAIL=0
+EXPECTED_IDLE_TIMEOUT="${CLAUDE_STREAM_IDLE_TIMEOUT_MS:-600000}"
+EXPECTED_BYTE_IDLE_TIMEOUT="${CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS:-$EXPECTED_IDLE_TIMEOUT}"
+EXPECTED_FIRST_BYTE_TIMEOUT="${CLAUDE_STREAM_FIRST_BYTE_TIMEOUT_MS:-600000}"
 export MOCK_LOG MOCK_FAIL
 
 PACKET="$SMOKE_DIR/packet.md"
@@ -89,6 +96,9 @@ printf '%s\n' '# smoke delta' > "$DELTA"
 REVIEW_STATE="$SMOKE_DIR/state"
 bash "$SCRIPT_DIR/claude-review.sh" start "$PACKET" "$REVIEW_STATE" smoke >/dev/null
 REVIEW_SESSION_ID="$(cat "$REVIEW_STATE/session_id")"
+grep -Fq -- "idle-timeout=$EXPECTED_IDLE_TIMEOUT" "$MOCK_LOG"
+grep -Fq -- "byte-idle-timeout=$EXPECTED_BYTE_IDLE_TIMEOUT" "$MOCK_LOG"
+grep -Fq -- "first-byte-timeout=$EXPECTED_FIRST_BYTE_TIMEOUT" "$MOCK_LOG"
 grep -Fq -- '--session-id' "$MOCK_LOG"
 grep -Fq -- "$REVIEW_SESSION_ID" "$MOCK_LOG"
 if grep -Fq -- '--no-session-persistence' "$MOCK_LOG"; then

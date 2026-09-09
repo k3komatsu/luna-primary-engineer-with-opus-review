@@ -85,7 +85,7 @@ In normal use, ask the Codex session, “Have Opus review this change too.” If
 
 Re-reviews continue the Opus session used for the initial review.
 
-Reviews can take several minutes. For advanced configuration or manual review commands, see the [Claude integration reference](references/claude-integration.md) and the [foreground runs reference](references/foreground-runs.md).
+Reviews can take several minutes. To avoid cutting off a long thinking pause, Claude stream timeouts default to 10 minutes. For advanced configuration or manual review commands, see the [Claude integration reference](references/claude-integration.md) and the [foreground runs reference](references/foreground-runs.md).
 
 ## Troubleshooting
 

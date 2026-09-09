@@ -67,6 +67,10 @@ The initial ordinary review adds `--session-id <uuid>`; a re-review replaces
 that with `--resume <uuid>`. Independent dual-review and panel calls add
 `--no-session-persistence` instead.
 
+Foreground Claude calls default their stream idle, byte-stream idle, and
+first-byte timeout variables to `600000` (10 minutes) when unset, and preserve
+explicitly supplied values.
+
 The helper appends the role system prompt and captures combined output plus the
 exit code. `status` and `collect` inspect files already written by that finished
 run. Press Ctrl-C in the invoking terminal to interrupt a live call.

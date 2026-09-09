@@ -84,8 +84,18 @@ luna_primary_engineer_runtime_dir() {
 # The caller remains responsible for setting the stage and validating the result.
 luna_primary_engineer_run_foreground() {
   local output="$1" exit_file="$2" rc=0
+  local idle_timeout_ms="${CLAUDE_STREAM_IDLE_TIMEOUT_MS:-600000}"
+  local byte_idle_timeout_ms="${CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS:-$idle_timeout_ms}"
+  local first_byte_timeout_ms="${CLAUDE_STREAM_FIRST_BYTE_TIMEOUT_MS:-600000}"
   shift 2
-  if claude "$@" >"$output" 2>&1; then
+  if [[ ! "$idle_timeout_ms" =~ ^[1-9][0-9]*$ || ! "$byte_idle_timeout_ms" =~ ^[1-9][0-9]*$ || ! "$first_byte_timeout_ms" =~ ^[1-9][0-9]*$ ]]; then
+    echo "ERROR: Claude stream timeout variables must be positive integers in milliseconds." >&2
+    return 2
+  fi
+  if CLAUDE_STREAM_IDLE_TIMEOUT_MS="$idle_timeout_ms" \
+    CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS="$byte_idle_timeout_ms" \
+    CLAUDE_STREAM_FIRST_BYTE_TIMEOUT_MS="$first_byte_timeout_ms" \
+    claude "$@" >"$output" 2>&1; then
     rc=0
   else
     rc=$?
