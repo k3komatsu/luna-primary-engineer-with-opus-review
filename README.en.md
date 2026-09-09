@@ -83,6 +83,8 @@ When a second opinion is useful, Claude Code Opus reviews the change in read-onl
 
 In normal use, ask the Codex session, “Have Opus review this change too.” If Claude Code is unavailable, the Codex fallback reviewer can be used instead.
 
+Re-reviews continue the Opus session used for the initial review.
+
 Reviews can take several minutes. For advanced configuration or manual review commands, see the [Claude integration reference](references/claude-integration.md) and the [foreground runs reference](references/foreground-runs.md).
 
 ## Troubleshooting

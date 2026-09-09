@@ -24,7 +24,7 @@ STATE_DIR="$2"
 shift 2
 
 [[ -d "$STATE_DIR" ]] || { echo "ERROR: missing state directory: $STATE_DIR" >&2; exit 2; }
-if [[ -f "$STATE_DIR/job_id" || -f "$STATE_DIR/session_id" ]]; then
+if [[ -f "$STATE_DIR/job_id" ]]; then
   echo "ERROR: this is a legacy asynchronous state directory; rerun the operation in a new directory." >&2
   exit 2
 fi

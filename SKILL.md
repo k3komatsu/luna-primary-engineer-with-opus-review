@@ -36,9 +36,9 @@ architecture boundaries.
 4. Primary runs focused checks and tests.
 5. When useful, run one read-only Claude review with `scripts/claude-review.sh`.
 6. The review command waits for Claude to finish and writes `result.txt`.
-7. Fix concrete findings, then use `resume` with a fix delta. This is a fresh
-   foreground review that reads the original packet, previous result, and delta;
-   it does not depend on a server-side conversation lifecycle.
+7. Fix concrete findings, then use `resume` with a fix delta. This continues the
+   same Claude review session in a new foreground turn, so the reviewer keeps
+   its prior findings without starting a separate review conversation.
 8. Finish when the review passes or the Primary explicitly accepts residual risk.
 
 Claude review is optional. If Claude is unavailable, use `luna_reviewer`.
@@ -47,7 +47,9 @@ Claude review is optional. If Claude is unavailable, use `luna_reviewer`.
 
 All repository review and advisory helpers use `claude -p` and wait for the
 process to exit. They do not dispatch asynchronous sessions, query job
-registries, attach to terminals, or depend on daemon sockets.
+registries, attach to terminals, or depend on daemon sockets. Ordinary review
+`start` stores an explicit Claude session ID and `resume` reuses it; dual and
+panel calls intentionally use non-persistent sessions for independence.
 
 The read-only invocation uses:
 
@@ -56,18 +58,23 @@ claude -p \
   --model opus --effort xhigh \
   --permission-mode dontAsk --permission-prompts none \
   --tools "Read,Glob,Grep" --disallowedTools "mcp__*" \
-  --disable-slash-commands --no-chrome --no-session-persistence \
+  --disable-slash-commands --no-chrome \
   --add-dir "$PWD" -- \
   "Read the supplied packet and return the requested artifact."
 ```
+
+The initial ordinary review adds `--session-id <uuid>`; a re-review replaces
+that with `--resume <uuid>`. Independent dual-review and panel calls add
+`--no-session-persistence` instead.
 
 The helper appends the role system prompt and captures combined output plus the
 exit code. `status` and `collect` inspect files already written by that finished
 run. Press Ctrl-C in the invoking terminal to interrupt a live call.
 
 Do not use asynchronous Claude execution for this skill. Do not use Claude
-agent registries, terminal-log collection, or conversation-resume state as a
-completion signal.
+agent registries or terminal-log collection as a completion signal. A saved
+session ID is used only to continue an ordinary review conversation; the
+result file and process exit code remain the completion signals.
 
 ## Review result contract
 
@@ -81,8 +88,8 @@ TEST_GAPS:
 PREVIOUS_FINDINGS:
 ```
 
-`claude-review.sh collect` rejects an incomplete result. A fresh `resume` run
-must re-check the previous findings and report OPEN/CLOSED status in
+`claude-review.sh collect` rejects an incomplete result. A `resume` run must
+re-check the previous findings and report OPEN/CLOSED status in
 `PREVIOUS_FINDINGS`.
 
 ## Ordinary review
@@ -95,8 +102,8 @@ bash scripts/claude-review.sh resume STATE_DIR FIX_DELTA
 ```
 
 `start` blocks until the review completes. `status` reports the stored stage;
-it does not poll Claude. `resume` starts a new foreground turn with the prior
-evidence and fix delta.
+it does not poll Claude. `resume` continues the stored Claude session in a new
+foreground turn with the fix delta.
 
 ## High-risk dual review
 
@@ -176,7 +183,7 @@ Primary.
 Luna Primary + Ponytail
   -> focused checks
   -> optional foreground Claude review
-  -> Luna fixes and fresh foreground re-review
+  -> Luna fixes and sticky foreground re-review
   -> accepted result
 ```
 

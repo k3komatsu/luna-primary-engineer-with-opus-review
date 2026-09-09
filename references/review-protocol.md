@@ -9,7 +9,7 @@ Primary implements + validates
   -> foreground Opus review
   -> result contract
   -> Primary fixes findings
-  -> fresh foreground re-review with fix delta
+  -> same-session foreground re-review with fix delta
   -> repeat until PASS / accepted risk
 ```
 
@@ -22,9 +22,9 @@ claude-review.sh collect STATE_DIR
 claude-review.sh resume STATE_DIR FIX_DELTA
 ```
 
-`resume` is a compatibility command name. It does not reuse a live
-conversation; it supplies the original packet, previous result, and fix delta
-to a new foreground invocation.
+`resume` continues the Claude session created by `start` in a new foreground
+turn. The fix delta is supplied as the new user turn, while the original packet
+and previous review remain in the conversation context.
 
 ## High-risk dual review
 

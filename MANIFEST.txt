@@ -1,16 +1,16 @@
 Luna Primary Engineer v6.6
 - Primary: Luna Max/Fast + Ponytail FULL
-- Ordinary review: one fresh Claude Opus foreground reviewer, xhigh effort, read-only, no --bare
+- Ordinary review: one Claude Opus foreground reviewer with a persisted session, xhigh effort, read-only, no --bare
 - Claude calls: synchronous `claude -p`, captured output, explicit exit-code and result-file checks
-- Re-review: a fresh foreground call reads the original packet, previous result, and fix delta
+- Re-review: the same Claude session continues in a foreground turn with the fix delta
 - State discipline: `stage=done` and a complete result contract are the collection gate
-- No job registry, terminal-log parsing, conversation ID tracking, or daemon/socket dependency
+- No job registry, terminal-log parsing, or daemon/socket dependency; ordinary review session IDs are stored explicitly for re-review
 - Permission discipline: dontAsk + permission-prompts none + Read/Glob/Grep + explicit MCP deny
-- Verification: `bash scripts/self-test.sh` covers result contracts and fresh-state guards; `scripts/doctor.sh` runs it
+- Verification: `bash scripts/self-test.sh` covers result contracts, fresh-state guards, and sticky re-review failure/retry; `scripts/doctor.sh` runs it
 - Dual high-risk review: neutral foreground Opus seed -> two blind independent foreground reviewers
 - Review fallback: Luna Max/Standard, read-only, no Ponytail
 - Difficult-task advisory panel: neutral foreground Opus seed -> 2-6 role-diverse foreground calls, sequentially
-- Opus follow-up: a useful branch receives its previous result and new question in a fresh foreground call
+- Opus follow-up: a useful panel branch receives its previous result and new question in a fresh foreground call
 - Shared context: calls keep model, effort, tools, permission mode, system prompt, and `--add-dir` stable
 - Claude tool boundary: Read/Glob/Grep only; MCP tools explicitly denied
 - Parallel Worker: Luna Max/Standard + Ponytail FULL, parallel-only

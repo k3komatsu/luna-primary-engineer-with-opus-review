@@ -7,8 +7,9 @@ and focused reasoning without becoming the implementation owner.
 
 Every helper invokes Claude with `-p/--print` and waits for the process to
 exit. The result is combined stdout/stderr captured in a state directory, and
-the exit code is stored beside it. There is no asynchronous job or daemon state
-to poll.
+the exit code is stored beside it. Ordinary review `start` creates a persistent
+session with an explicit ID; `resume` continues that session. Dual-review and
+panel calls use fresh non-persistent sessions.
 
 The common read-only options are:
 
@@ -19,8 +20,11 @@ The common read-only options are:
 --disallowedTools mcp__*
 --disable-slash-commands
 --no-chrome
---no-session-persistence
 ```
+
+Ordinary review calls add `--session-id <uuid>` on the initial turn and
+`--resume <uuid>` on re-review turns. Independent dual-review and panel calls
+add `--no-session-persistence`.
 
 The helper reads the role system prompt and passes it through
 `--append-system-prompt`. `--add-dir` grants read access to the packet/state
@@ -61,6 +65,6 @@ TEST_GAPS:
 PREVIOUS_FINDINGS:
 ```
 
-Re-review and panel follow-up commands use fresh foreground calls. They pass
-the prior result and new fix/question files as explicit context rather than
-depending on conversation identity or runtime state.
+Ordinary re-review uses the stored Claude session ID and continues the same
+conversation with the new fix delta. Panel follow-up remains a fresh foreground
+call and passes the prior result and new question as explicit context.

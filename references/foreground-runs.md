@@ -22,6 +22,7 @@ Ordinary review state contains:
 ```text
 review-packet.md
 packet_path
+session_id
 stage
 run_exit_code
 result.txt
@@ -32,14 +33,18 @@ Dual-review and panel branches additionally archive their first result as
 `initial-result.txt`.
 
 Panel and dual-review state use the same files under `seed/` and one directory
-per role. A result directory is single-use for its initial run. Reuse the same
-top-level directory only through the explicit `resume`/`followup` commands.
+per role. A result directory is single-use for its initial run. Ordinary
+re-review uses the stored `session_id` and the same Claude conversation;
+panel follow-up remains a fresh call with explicit prior-result context.
 
 ## Interruption and failure
 
-Press Ctrl-C in the terminal running Claude. An interrupted call leaves its
-partial output and non-zero or absent exit marker; start a new state directory
-after inspecting it. Do not treat a partial result as a review verdict.
+Press Ctrl-C in the terminal running Claude. An interrupted initial call leaves
+its partial output and non-zero or absent exit marker; start a new state
+directory after inspecting it. A failed ordinary re-review marks both the
+round and its parent state as failed, so `collect` cannot return the previous
+successful result; rerun `resume` to retry the failed round in the stored
+session. Do not treat a partial result as a review verdict.
 
 If Claude is unavailable or authentication fails, use the Luna reviewer
 fallback. Do not silently create a second call while the first foreground call

@@ -19,9 +19,10 @@ Usage:
   claude-review.sh dual-advance GROUP_DIR
   claude-review.sh dual-collect GROUP_DIR
 
-Claude is always run in the foreground with `claude -p`. `start`, `resume`,
-`dual-start`, and `dual-advance` wait for their Claude calls to finish and
-write result.txt. status/collect only inspect those result files.
+Claude is always run in the foreground with `claude -p`. Ordinary `start`
+creates a persistent session ID and `resume` continues that session. Dual
+review calls remain independent and non-persistent. All run commands wait for
+Claude to finish and write result.txt; status/collect only inspect those files.
 TXT
 }
 
@@ -52,14 +53,13 @@ base_args=(
   --append-system-prompt "$SYSTEM_PROMPT_TEXT"
   --disable-slash-commands
   --no-chrome
-  --no-session-persistence
 )
 
 run_foreground() {
   local output="$1" exit_file="$2" add_dir="$3" prompt="$4"
   shift 4
   mkdir -p "$(dirname "$output")"
-  luna_primary_engineer_run_foreground "$output" "$exit_file" "${base_args[@]}" --add-dir "$add_dir" "$@" -- "$prompt"
+  luna_primary_engineer_run_foreground "$output" "$exit_file" "${base_args[@]}" "$@" --add-dir "$add_dir" -- "$prompt"
 }
 
 show_result() {
@@ -80,10 +80,10 @@ collect_review() {
 }
 
 run_review() {
-  local state_dir="$1" prompt="$2" rc=0
-  local add_dir="${3:-$state_dir}"
+  local state_dir="$1" prompt="$2" add_dir="$3" rc=0
+  shift 3
   printf 'running\n' > "$state_dir/stage"
-  if run_foreground "$state_dir/result.txt" "$state_dir/run_exit_code" "$add_dir" "$prompt"; then
+  if run_foreground "$state_dir/result.txt" "$state_dir/run_exit_code" "$add_dir" "$prompt" "$@"; then
     rc=0
   else
     rc=$?
@@ -112,14 +112,17 @@ case "$MODE" in
     [[ -f "$PACKET" ]] || { echo "ERROR: packet not found: $PACKET" >&2; exit 2; }
     luna_primary_engineer_require_fresh_state_dir "$STATE_DIR" || exit $?
     mkdir -p "$STATE_DIR"
+    SESSION_ID="$(luna_primary_engineer_new_session_id)" || exit 1
     cp "$PACKET" "$STATE_DIR/review-packet.md"
     PACKET_ABS="$(cd "$STATE_DIR" && pwd)/review-packet.md"
     printf '%s\n' "$LABEL" > "$STATE_DIR/label"
     printf 'single-review\n' > "$STATE_DIR/kind"
     printf '%s\n' "$PWD" > "$STATE_DIR/cwd"
+    printf '%s\n' "$SESSION_ID" > "$STATE_DIR/session_id"
     printf '%s\n' "$PACKET_ABS" > "$STATE_DIR/packet_path"
     run_review "$STATE_DIR" \
-      "This is a foreground read-only review. Read the review packet at: $PACKET_ABS . Inspect repository files only as needed. Do not ask the Primary Engineer questions; if evidence is incomplete, record the uncertainty and finish. Return the complete review contract from your system instructions."
+      "This is a foreground read-only review. Read the review packet at: $PACKET_ABS . Inspect repository files only as needed. Do not ask the Primary Engineer questions; if evidence is incomplete, record the uncertainty and finish. Return the complete review contract from your system instructions." \
+      "$STATE_DIR" --session-id "$SESSION_ID"
     show_result "$STATE_DIR"
     ;;
 
@@ -136,15 +139,38 @@ case "$MODE" in
   resume)
     require_claude
     [[ $# -eq 2 ]] || { usage >&2; exit 2; }
-    STATE_DIR="$1"
+    STATE_INPUT="$1"
     DELTA="$2"
-    [[ -f "$STATE_DIR/result.txt" && "$(cat "$STATE_DIR/stage" 2>/dev/null || true)" == "done" ]] || {
+    [[ -d "$STATE_INPUT" ]] || {
+      echo "ERROR: foreground review state directory not found: $STATE_INPUT" >&2
+      exit 2
+    }
+    STATE_DIR="$(cd "$STATE_INPUT" && pwd)" || {
+      echo "ERROR: cannot resolve foreground review state directory: $STATE_INPUT" >&2
+      exit 2
+    }
+    PARENT_STAGE="$(cat "$STATE_DIR/stage" 2>/dev/null || true)"
+    [[ -f "$STATE_DIR/result.txt" && ( "$PARENT_STAGE" == "done" || "$PARENT_STAGE" == "failed" ) ]] || {
       echo "ERROR: completed foreground review not found: $STATE_DIR" >&2
       exit 10
     }
+    if [[ "$PARENT_STAGE" == "failed" ]]; then
+      FAILED_ROUND="$(cat "$STATE_DIR/current_round" 2>/dev/null || true)"
+      [[ "$FAILED_ROUND" == rereview-* && "$(cat "$STATE_DIR/$FAILED_ROUND/stage" 2>/dev/null || true)" == "failed" ]] || {
+        echo "ERROR: failed re-review state is not retryable: $STATE_DIR" >&2
+        exit 10
+      }
+    fi
     [[ -f "$DELTA" ]] || { echo "ERROR: delta not found: $DELTA" >&2; exit 2; }
     PACKET_ABS="$(cat "$STATE_DIR/packet_path" 2>/dev/null || true)"
     [[ -f "$PACKET_ABS" ]] || { echo "ERROR: original review packet not found: $PACKET_ABS" >&2; exit 2; }
+    SESSION_ID="$(cat "$STATE_DIR/session_id" 2>/dev/null || true)"
+    [[ "$SESSION_ID" =~ ^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$ ]] || {
+      echo "ERROR: review state has no resumable Claude session ID: $STATE_DIR" >&2
+      exit 2
+    }
+    REVIEW_CWD="$(cat "$STATE_DIR/cwd" 2>/dev/null || true)"
+    [[ -d "$REVIEW_CWD" ]] || { echo "ERROR: original review directory is unavailable: $REVIEW_CWD" >&2; exit 2; }
 
     N=1
     while [[ -e "$STATE_DIR/rereview-$N" ]]; do N=$((N + 1)); done
@@ -153,15 +179,24 @@ case "$MODE" in
     cp "$DELTA" "$ROUND/fix-delta.md"
     cp "$STATE_DIR/result.txt" "$ROUND/previous-result.txt"
     printf '%s\n' "$PACKET_ABS" > "$ROUND/packet_path"
+    printf '%s\n' "$SESSION_ID" > "$ROUND/session_id"
     printf 'rereview-%s\n' "$N" > "$STATE_DIR/current_round"
     DELTA_ABS="$(cd "$ROUND" && pwd)/fix-delta.md"
-    PREVIOUS_ABS="$(cd "$ROUND" && pwd)/previous-result.txt"
-    if run_review "$ROUND" \
-      "This is a fresh foreground re-review. Read the original review packet at: $PACKET_ABS , the Primary's fix delta at: $DELTA_ABS , and the previous review result at: $PREVIOUS_ABS . Re-check each relevant finding, inspect regressions introduced by the fixes, and return the complete review contract. Do not ask questions; finish with the evidence available." \
-      "$STATE_DIR"; then
+    PREVIOUS_ABS="$ROUND/previous-result.txt"
+    printf 'running\n' > "$STATE_DIR/stage"
+    if (cd "$REVIEW_CWD" && run_review "$ROUND" \
+      "This is a sticky foreground re-review in the same Claude conversation. Read the original review packet at: $PACKET_ABS , the previous review result at: $PREVIOUS_ABS , and the Primary's fix delta at: $DELTA_ABS . Re-check each relevant finding from the previous review, inspect regressions introduced by the fixes, and return the complete review contract. Do not ask questions; finish with the evidence available." \
+      "$STATE_DIR" --resume "$SESSION_ID"); then
       :
     else
       resume_rc=$?
+      if [[ -f "$ROUND/run_exit_code" ]]; then
+        cp "$ROUND/run_exit_code" "$STATE_DIR/run_exit_code"
+      else
+        printf '%s\n' "$resume_rc" > "$STATE_DIR/run_exit_code"
+      fi
+      printf 'failed\n' > "$ROUND/stage"
+      printf 'failed\n' > "$STATE_DIR/stage"
       exit "$resume_rc"
     fi
     cp "$ROUND/result.txt" "$STATE_DIR/result.txt"
@@ -186,7 +221,7 @@ case "$MODE" in
     printf 'running\n' > "$GROUP/seed/stage"
     printf '%s\n' "$PACKET_ABS" > "$GROUP/seed/packet_path"
     if run_foreground "$GROUP/seed/result.txt" "$GROUP/seed/run_exit_code" "$GROUP" \
-      "LUNA_PRIMARY_ENGINEER_SHARED_SEED_MODE. This is a foreground factual-context load. Read the review packet at: $PACKET_ABS . Load it as shared factual context only. Do not evaluate correctness, identify defects, rank risks, or propose fixes. Do not ask questions. Reply exactly SEED_READY when loaded."; then
+      "LUNA_PRIMARY_ENGINEER_SHARED_SEED_MODE. This is a foreground factual-context load. Read the review packet at: $PACKET_ABS . Load it as shared factual context only. Do not evaluate correctness, identify defects, rank risks, or propose fixes. Do not ask questions. Reply exactly SEED_READY when loaded." --no-session-persistence; then
       :
     else
       printf 'failed\n' > "$GROUP/seed/stage"
@@ -245,7 +280,7 @@ case "$MODE" in
       printf '%s\n' "$PACKET_ABS" > "$D/packet_path"
       printf 'running\n' > "$D/stage"
       if run_foreground "$D/result.txt" "$D/run_exit_code" "$GROUP" \
-        "You are Reviewer $n, an independent foreground reviewer. Read the factual review packet at: $PACKET_ABS and the neutral seed result at: $SEED_ABS . Analyze the change independently from your role. Do not seek consensus with a hypothetical peer. Do not ask questions; record uncertainty and finish. Return the complete review contract from your system instructions."; then
+        "You are Reviewer $n, an independent foreground reviewer. Read the factual review packet at: $PACKET_ABS and the neutral seed result at: $SEED_ABS . Analyze the change independently from your role. Do not seek consensus with a hypothetical peer. Do not ask questions; record uncertainty and finish. Return the complete review contract from your system instructions." --no-session-persistence; then
         if luna_primary_engineer_review_contract_complete "$D/result.txt"; then
           printf 'done\n' > "$D/stage"
           cp "$D/result.txt" "$D/initial-result.txt"

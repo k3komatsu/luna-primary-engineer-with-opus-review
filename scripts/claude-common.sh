@@ -19,6 +19,33 @@ luna_primary_engineer_warn_billing() {
   fi
 }
 
+luna_primary_engineer_new_session_id() {
+  local uuid hex
+  if command -v uuidgen >/dev/null 2>&1; then
+    uuid="$(uuidgen)"
+    [[ "$uuid" =~ ^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$ ]] || return 1
+    printf '%s\n' "$uuid"
+    return 0
+  fi
+  if [[ -r /proc/sys/kernel/random/uuid ]]; then
+    local proc_uuid
+    proc_uuid="$(cat /proc/sys/kernel/random/uuid)"
+    if [[ "$proc_uuid" =~ ^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$ ]]; then
+      printf '%s\n' "$proc_uuid"
+      return 0
+    fi
+  fi
+  if command -v od >/dev/null 2>&1 && [[ -r /dev/urandom ]]; then
+    hex="$(od -An -N16 -tx1 /dev/urandom | tr -d '[:space:]')"
+    [[ "${#hex}" -ge 32 ]] || return 1
+    printf '%s-%s-%s-%s-%s\n' \
+      "${hex:0:8}" "${hex:8:4}" "${hex:12:4}" "${hex:16:4}" "${hex:20:12}"
+    return 0
+  fi
+  echo "ERROR: cannot generate a UUID for the Claude session." >&2
+  return 1
+}
+
 luna_primary_engineer_require_fresh_state_dir() {
   local state_dir="$1" marker
   for marker in job_id session_id launch.txt launch_exit_code result.txt run_exit_code; do
@@ -71,7 +98,7 @@ luna_primary_engineer_review_contract_complete() {
   local file="$1" heading
   [[ -f "$file" ]] || return 1
   for heading in VERDICT BLOCKERS NONBLOCKING TEST_GAPS PREVIOUS_FINDINGS; do
-    grep -Fq "$heading" "$file" || return 1
+    grep -Eq "^${heading}:" "$file" || return 1
   done
 }
 

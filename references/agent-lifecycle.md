@@ -9,13 +9,14 @@ review routing, integration, and user communication.
 
 ```text
 FOREGROUND REVIEW -> DONE -> FINDINGS
-FINDINGS -> PRIMARY_FIX -> FRESH FOREGROUND RE-REVIEW
-RE-REVIEW -> DONE -> FIX AGAIN? -> FRESH RE-REVIEW
+FINDINGS -> PRIMARY_FIX -> STICKY FOREGROUND RE-REVIEW
+RE-REVIEW -> DONE -> FIX AGAIN? -> STICKY RE-REVIEW
 PASS/ACCEPTED -> ARCHIVE RESULT FILES
 ```
 
-The process exit code and stored result files are the only completion signals.
-There is no job registry or conversation lifecycle to resume.
+The process exit code and stored result files are the completion signals. An
+ordinary review also stores a Claude session ID so `resume` can continue the
+same conversation; this is explicit state, not a background job registry.
 
 ## High-risk dual review
 

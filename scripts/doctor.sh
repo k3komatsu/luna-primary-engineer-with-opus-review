@@ -65,9 +65,18 @@ if command -v claude >/dev/null 2>&1; then
     echo "WARN Claude Code installed but auth status failed; fallback Luna review will be used in auto mode"
   fi
   HELP="$(claude --help 2>&1 || true)"
-  if grep -q -- '--print' <<<"$HELP"; then echo "OK   Claude Code supports foreground --print"; else echo "WARN Claude Code --print not found; foreground review cannot run"; FAIL=1; fi
+  for flag in --print --effort --tools --disallowedTools --append-system-prompt --disable-slash-commands --no-chrome; do
+    if grep -q -- "$flag" <<<"$HELP"; then
+      echo "OK   Claude Code supports $flag"
+    else
+      echo "FAIL Claude Code lacks $flag; foreground review cannot run"
+      FAIL=1
+    fi
+  done
   if grep -q -- '--permission-prompts' <<<"$HELP"; then echo "OK   Claude Code supports --permission-prompts"; else echo "WARN Claude Code lacks --permission-prompts; read-only reviews may pause for approval"; fi
   if grep -q -- 'dontAsk' <<<"$HELP"; then echo "OK   Claude Code supports dontAsk permission mode"; else echo "WARN Claude Code lacks dontAsk permission mode; read-only reviews may enter plan mode"; fi
+  if grep -q -- '--session-id' <<<"$HELP"; then echo "OK   Claude Code supports explicit session IDs"; else echo "FAIL Claude Code lacks --session-id; sticky re-review cannot start"; FAIL=1; fi
+  if grep -q -- '--resume' <<<"$HELP"; then echo "OK   Claude Code supports session resume"; else echo "FAIL Claude Code lacks --resume; sticky re-review cannot continue"; FAIL=1; fi
   if grep -q -- '--no-session-persistence' <<<"$HELP"; then echo "OK   Claude Code supports non-persistent foreground sessions"; else echo "WARN Claude Code lacks --no-session-persistence; foreground runs may leave session state"; fi
 else
   echo "WARN Claude Code not installed; fallback Luna review will be used"
