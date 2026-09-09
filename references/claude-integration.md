@@ -26,11 +26,11 @@ Ordinary review calls add `--session-id <uuid>` on the initial turn and
 `--resume <uuid>` on re-review turns. Independent dual-review and panel calls
 add `--no-session-persistence`.
 
-Foreground calls default the stream idle, byte-stream idle, and first-byte
-timeouts to `600000` (10 minutes) when the corresponding Claude variables are
-unset. This allows extended Opus thinking pauses to finish instead of being
-cut off by a shorter local default; set the variables explicitly to choose
-other positive millisecond values.
+Foreground calls default `API_TIMEOUT_MS`, the stream idle, byte-stream idle,
+and first-byte timeouts to `600000` (10 minutes) when the corresponding Claude
+variables are unset. This allows extended Opus thinking pauses and slow API
+requests to finish instead of being cut off by a shorter local default; set
+the variables explicitly to choose other positive millisecond values.
 
 The helper reads the role system prompt and passes it through
 `--append-system-prompt`. `--add-dir` grants read access to the packet/state
@@ -50,7 +50,8 @@ claude doctor
 
 - `auto`: require `claude auth status` to succeed.
 - `on`: skip the authentication precheck and attempt Claude.
-- `off`: use the Luna reviewer fallback.
+- `off`: use the Luna reviewer fallback before launching Claude; it is not a
+  fallback for a review that has already started.
 
 `ANTHROPIC_API_KEY` may indicate API-billed authentication and is reported by
 the helpers.
@@ -58,8 +59,10 @@ the helpers.
 ## Result handling
 
 `start`, `resume`, `dual-start`, and `dual-advance` wait for Claude and write
-their result files before returning. `status` only reads the state directory;
-`collect` validates and prints stored output.
+their result files before returning. If the shell tool yields a session ID,
+poll that same session until it exits. A shell/tool timeout or `Request timed
+out` while waiting does not authorize a duplicate or Luna fallback. `status`
+only reads the state directory; `collect` validates and prints stored output.
 
 An ordinary review is accepted only when all headings are present:
 

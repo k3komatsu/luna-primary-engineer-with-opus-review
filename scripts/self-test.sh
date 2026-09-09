@@ -66,6 +66,7 @@ claude() {
     return 0
   fi
   printf '%s\n' \
+    "api-timeout=${API_TIMEOUT_MS:-unset}" \
     "idle-timeout=${CLAUDE_STREAM_IDLE_TIMEOUT_MS:-unset}" \
     "byte-idle-timeout=${CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS:-unset}" \
     "first-byte-timeout=${CLAUDE_STREAM_FIRST_BYTE_TIMEOUT_MS:-unset}" >> "$MOCK_LOG"
@@ -87,6 +88,7 @@ MOCK_FAIL=0
 EXPECTED_IDLE_TIMEOUT="${CLAUDE_STREAM_IDLE_TIMEOUT_MS:-600000}"
 EXPECTED_BYTE_IDLE_TIMEOUT="${CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS:-$EXPECTED_IDLE_TIMEOUT}"
 EXPECTED_FIRST_BYTE_TIMEOUT="${CLAUDE_STREAM_FIRST_BYTE_TIMEOUT_MS:-600000}"
+EXPECTED_API_TIMEOUT="${API_TIMEOUT_MS:-600000}"
 export MOCK_LOG MOCK_FAIL
 
 PACKET="$SMOKE_DIR/packet.md"
@@ -99,6 +101,7 @@ REVIEW_SESSION_ID="$(cat "$REVIEW_STATE/session_id")"
 grep -Fq -- "idle-timeout=$EXPECTED_IDLE_TIMEOUT" "$MOCK_LOG"
 grep -Fq -- "byte-idle-timeout=$EXPECTED_BYTE_IDLE_TIMEOUT" "$MOCK_LOG"
 grep -Fq -- "first-byte-timeout=$EXPECTED_FIRST_BYTE_TIMEOUT" "$MOCK_LOG"
+grep -Fq -- "api-timeout=$EXPECTED_API_TIMEOUT" "$MOCK_LOG"
 grep -Fq -- '--session-id' "$MOCK_LOG"
 grep -Fq -- "$REVIEW_SESSION_ID" "$MOCK_LOG"
 if grep -Fq -- '--no-session-persistence' "$MOCK_LOG"; then
@@ -140,5 +143,17 @@ export MOCK_FAIL
 bash "$SCRIPT_DIR/claude-review.sh" resume "$FAIL_STATE" "$DELTA" >/dev/null
 [[ "$(cat "$FAIL_STATE/stage")" == done ]]
 [[ "$(cat "$FAIL_STATE/current_round")" == rereview-2 ]]
+
+FALLBACK_AGENT="$SCRIPT_DIR/../codex-agents/luna_reviewer.toml"
+for marker in LUNA_CLAUDE_PREFLIGHT_FALLBACK CLAUDE_NOT_LAUNCHED; do
+  if ! grep -Fq -- "$marker" "$FALLBACK_AGENT"; then
+    echo "FAIL: fallback reviewer is missing the preflight marker $marker" >&2
+    exit 1
+  fi
+done
+if ! grep -Fq -- 'never invoke `luna_reviewer`' "$SCRIPT_DIR/../SKILL.md"; then
+  echo "FAIL: skill does not forbid in-flight Luna fallback" >&2
+  exit 1
+fi
 
 echo "PASS: foreground result, contract, fresh-state, and sticky-review guards"

@@ -34,14 +34,39 @@ architecture boundaries.
 2. Primary plans one coherent change unit.
 3. Primary implements with Ponytail FULL.
 4. Primary runs focused checks and tests.
-5. When useful, run one read-only Claude review with `scripts/claude-review.sh`.
-6. The review command waits for Claude to finish and writes `result.txt`.
+5. Before a review, run the Claude preflight. If it passes, run one read-only
+   Claude review with `scripts/claude-review.sh`.
+6. The review command waits for Claude to finish and writes `result.txt`. If
+   the shell tool yields a session ID, keep polling that same shell session;
+   do not start another reviewer while it is alive.
 7. Fix concrete findings, then use `resume` with a fix delta. This continues the
    same Claude review session in a new foreground turn, so the reviewer keeps
    its prior findings without starting a separate review conversation.
 8. Finish when the review passes or the Primary explicitly accepts residual risk.
 
-Claude review is optional. If Claude is unavailable, use `luna_reviewer`.
+Claude review is optional. Use `luna_reviewer` only when the preflight check
+fails before Claude is launched, or when the user explicitly disables Claude
+before starting the review. It is not a timeout or in-flight fallback.
+
+## Opus single-flight rule
+
+Once `claude-review.sh start`, `resume`, `dual-start`, `dual-advance`, or a
+panel run has launched Claude, that run owns the review until it reaches a
+terminal state. While it is running or its state is unknown:
+
+- never invoke `luna_reviewer`;
+- never create `state2`, retry, resume, fork, or launch a duplicate;
+- never interpret a shell/tool timeout, missing intermediate output, or
+  `Request timed out` from the waiting command as proof that Claude is
+  unavailable;
+- wait on the same shell session with `write_stdin` when one was returned, or
+  check the same state directory at a natural interval.
+
+Only a completed `stage=done` may be collected. If the launched Claude call
+eventually reaches `stage=failed`, report that terminal failure and stop for a
+user decision; do not silently spend another reviewer call. The Luna fallback
+requires both literal markers `LUNA_CLAUDE_PREFLIGHT_FALLBACK` and
+`CLAUDE_NOT_LAUNCHED`, as described in `codex-agents/luna_reviewer.toml`.
 
 ## Foreground Claude contract
 
@@ -67,9 +92,9 @@ The initial ordinary review adds `--session-id <uuid>`; a re-review replaces
 that with `--resume <uuid>`. Independent dual-review and panel calls add
 `--no-session-persistence` instead.
 
-Foreground Claude calls default their stream idle, byte-stream idle, and
-first-byte timeout variables to `600000` (10 minutes) when unset, and preserve
-explicitly supplied values.
+Foreground Claude calls default the API request timeout, stream idle,
+byte-stream idle, and first-byte timeout variables to `600000` (10 minutes)
+when unset, and preserve explicitly supplied values.
 
 The helper appends the role system prompt and captures combined output plus the
 exit code. `status` and `collect` inspect files already written by that finished

@@ -43,8 +43,12 @@ the previous branch result and a new delta in a fresh foreground call.
 
 ## luna_reviewer
 
-Fallback reviewer when Claude is unavailable or intentionally disabled. It
-reviews the same change and fix evidence without editing files.
+Preflight-only fallback reviewer. It is eligible only when Claude availability
+failed before launch, or the user disabled Claude before launch. It must not be
+started while an Opus process/state is running, unknown, blocked, or waiting;
+an outer shell timeout and `Request timed out` are not preflight failures. The
+caller must provide `LUNA_CLAUDE_PREFLIGHT_FALLBACK` and
+`CLAUDE_NOT_LAUNCHED`, otherwise it refuses without inspecting the repository.
 
 ## luna_worker
 

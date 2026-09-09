@@ -90,6 +90,7 @@ run_review() {
   fi
   if (( rc != 0 )); then
     printf 'failed\n' > "$state_dir/stage"
+    echo "ERROR: Claude review failed after launch; this is not a preflight fallback condition. Inspect the state and wait for an explicit decision." >&2
     cat "$state_dir/result.txt" >&2 || true
     return "$rc"
   fi

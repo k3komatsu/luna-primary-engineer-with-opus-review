@@ -81,7 +81,7 @@ Ponytail is a supporting skill that keeps changes focused and avoids unnecessary
 
 When a second opinion is useful, Claude Code Opus reviews the change in read-only mode. It checks for missed cases and design concerns from a perspective separate from Luna's.
 
-In normal use, ask the Codex session, “Have Opus review this change too.” If Claude Code is unavailable, the Codex fallback reviewer can be used instead.
+In normal use, ask the Codex session, “Have Opus review this change too.” If Claude Code is unavailable before the review starts, the Codex fallback reviewer can be used instead. Once an Opus review has started, the workflow does not switch reviewers automatically while waiting for its result.
 
 Re-reviews continue the Opus session used for the initial review.
 

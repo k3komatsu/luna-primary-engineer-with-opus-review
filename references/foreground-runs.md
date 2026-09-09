@@ -46,9 +46,13 @@ round and its parent state as failed, so `collect` cannot return the previous
 successful result; rerun `resume` to retry the failed round in the stored
 session. Do not treat a partial result as a review verdict.
 
-If Claude is unavailable or authentication fails, use the Luna reviewer
-fallback. Do not silently create a second call while the first foreground call
-is still running.
+If the Claude preflight fails before launch, or the user disabled Claude before
+launch, use the Luna reviewer fallback with its explicit preflight markers.
+Once Claude has launched, never invoke the fallback, retry, or create a second
+state while the run is pending. A shell/tool timeout, missing intermediate
+output, or `Request timed out` is not evidence that a launched review is
+unavailable. If the launched call reaches terminal `failed`, report it and wait
+for a user decision.
 
 ## Commands
 
