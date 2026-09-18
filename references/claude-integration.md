@@ -25,7 +25,7 @@ The common options are:
 --permission-mode dontAsk
 --permission-prompts none
 --tools Read,Glob,Grep,Write     # Write only in path-scoped mode
---allowedTools Edit(<exact-result-file>)
+--allowedTools "Edit(/$result_file)"  # $result_file is already absolute
 --disallowedTools Bash mcp__*
 --disable-slash-commands
 --no-chrome
@@ -37,9 +37,12 @@ wrapper also snapshots Git status before and after the call, so an escaped
 implementation edit fails the review.
 
 Claude Code uses the `Edit(path)` permission grammar to scope all file-editing
-tools, including the `Write` tool. The presence of `--allowedTools` in help is
-not enough to prove that every rule spelling is supported; the helper does not
-pass unsupported deny names such as `MultiEdit`.
+tools, including the `Write` tool. For an already absolute shell variable, the
+extra slash is intentional: `Edit(/$result_file)` becomes
+`Edit(//home/.../reviewer-result.md)`. A single leading slash is project-relative
+in this grammar. The presence of `--allowedTools` in help is not enough to prove
+that every rule spelling is supported; the helper does not pass unsupported
+deny names such as `MultiEdit`.
 
 If the installed Claude CLI does not expose a usable path-scoped permission
 interface, the helper does not enable generic Write/Edit/Bash. It asks Claude

@@ -111,7 +111,7 @@ versions, the wrapper exposes `Write` but scopes the file permission with the
 `Edit` rule:
 
 ```text
-Edit(<exact-result-path>)
+Edit(//absolute/result/path)
 ```
 
 Claude Code uses `Edit(path)` permission rules for all file-editing tools,
@@ -122,6 +122,12 @@ such as `MultiEdit`. The reviewer system prompt explicitly says
 files. The wrapper validates the path, snapshots the repository status before
 and after the call, and rejects any implementation change that escapes the
 read-only boundary.
+
+When the shell variable already contains an absolute path such as
+`/home/.../reviewer-result.md`, pass `--allowedTools "Edit(/$result_file)"`.
+The resulting rule is `Edit(//home/.../reviewer-result.md)`; the doubled
+leading slash is intentional because Claude Code treats a single leading slash
+as project-relative.
 
 The presence of `--allowedTools` in `claude --help` alone does not prove that
 every permission-rule spelling is supported. If the CLI does not expose a
@@ -216,8 +222,8 @@ Reviewer and panel calls use:
 
 - `--permission-mode dontAsk` and `--permission-prompts none` (this is not
   Plan mode; unapproved tools are denied rather than waiting for approval);
-- `Read,Glob,Grep` plus `Write` scoped by the exact `Edit(path)` permission
-  rule when supported;
+- `Read,Glob,Grep` plus `Write` scoped by the exact absolute `Edit(//path)`
+  permission rule when supported;
 - no generic Edit, Bash, notebook, or MCP tool;
 - no repository implementation editing or recursive subagents.
 

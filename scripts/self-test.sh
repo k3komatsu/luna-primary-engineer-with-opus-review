@@ -88,8 +88,8 @@ claude() {
       esac
     done
     if [[ "$LUNA_PRIMARY_ENGINEER_CLAUDE_RESULT_HANDOFF" != stdout ]] && \
-      ! printf '%s\n' "$@" | grep -Eq '^Edit\(/'; then
-      printf '%s\n' 'Permission allow rule is missing Edit(path)' >&2
+      ! printf '%s\n' "$@" | grep -Eq '^Edit\(//'; then
+      printf '%s\n' 'Permission allow rule must use an absolute Edit(//path) rule' >&2
       return 2
     fi
   fi
@@ -158,7 +158,7 @@ grep -Fq -- 'idle-timeout=' "$MOCK_LOG"
 grep -Fq -- '--session-id' "$MOCK_LOG"
 grep -Fq -- "$REVIEW_SESSION_ID" "$MOCK_LOG"
 grep -Fq -- '--allowedTools' "$MOCK_LOG"
-grep -Fq -- "Edit($REVIEW_STATE/attempt-1/reviewer-result.md)" "$MOCK_LOG"
+grep -Fq -- "Edit(/$REVIEW_STATE/attempt-1/reviewer-result.md)" "$MOCK_LOG"
 grep -Fq -- '--tools' "$MOCK_LOG"
 grep -Fq -- 'Read,Glob,Grep,Write' "$MOCK_LOG"
 ! grep -Fq -- 'Write(/' "$MOCK_LOG"

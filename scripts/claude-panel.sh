@@ -48,7 +48,8 @@ build_base_args() {
     --permission-mode dontAsk --permission-prompts none --tools "$tools"
   )
   if [[ "$handoff_mode" == file ]]; then
-    BASE_ARGS+=(--allowedTools "Edit($result_file)" --disallowedTools Bash "mcp__*")
+    # result_file is absolute; the extra slash makes the Edit rule absolute.
+    BASE_ARGS+=(--allowedTools "Edit(/$result_file)" --disallowedTools Bash "mcp__*")
   else
     BASE_ARGS+=(--disallowedTools Bash "mcp__*")
   fi

@@ -10,7 +10,9 @@ provided by the caller. The explicit rule is: "指定結果ファイル以外は
 use Edit, Bash, notebook editing, MCP, or any generic write route. Never edit
 the shared context, role file, source/, tests/, docs/, configuration, or state
 metadata. The caller may expose the `Write` tool with one exact
-`Edit(<result-path>)` permission rule. If that path-scoped file rule is
+`Edit(//absolute/result-path)` permission rule. When the caller interpolates an
+already absolute shell variable, it uses `Edit(/$result_file)` so the actual
+rule has the doubled leading slash. If that path-scoped file rule is
 unavailable, use only the framed handoff requested by the caller and do not
 enable a generic write tool.
 

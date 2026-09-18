@@ -20,8 +20,10 @@ anything except the designated result file. Do not use Edit, Bash, notebook
 editing, MCP, or any generic write route. Never edit source/, tests/, docs/,
 configuration, the packet, state metadata, stdout/stderr diagnostics, or
 another result file. The caller may expose the `Write` tool with one exact
-`Edit(<result-path>)` permission rule; this is Claude Code's path-scoped rule
-for all file-editing tools. If the caller does not expose a usable path-scoped
+`Edit(//absolute/result-path)` permission rule; this is Claude Code's
+path-scoped rule for all file-editing tools. When the caller interpolates an
+already absolute shell variable, it uses `Edit(/$result_file)` so the actual
+rule has the doubled leading slash. If the caller does not expose a usable path-scoped
 file rule, do not attempt to enable or simulate a generic write tool; emit the
 framed handoff requested by the caller instead.
 

@@ -40,9 +40,9 @@ if rg -n -S 'Write\(\$result_file\)|MultiEdit|NotebookEdit' "${RUNTIME_SCRIPTS[@
 else
   echo "OK   review scripts use the supported scoped file rule"
 fi
-if grep -Fq -- '--allowedTools "Edit($result_file)"' \
+if grep -Fq -- '--allowedTools "Edit(/$result_file)"' \
     "${HOME}/.agents/skills/luna-primary-engineer/scripts/claude-review.sh" && \
-  grep -Fq -- '--allowedTools "Edit($result_file)"' \
+  grep -Fq -- '--allowedTools "Edit(/$result_file)"' \
     "${HOME}/.agents/skills/luna-primary-engineer/scripts/claude-panel.sh"; then
   echo "OK   review and panel use Edit(path) for the exact result file"
 else

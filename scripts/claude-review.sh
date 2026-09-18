@@ -69,7 +69,10 @@ build_base_args() {
     # editing tools, including Write. Keep Write in the tool surface so Claude
     # can create the designated file, but do not expose generic Edit/Bash/MCP.
     BASE_ARGS+=(
-      --allowedTools "Edit($result_file)"
+      # Claude Code file rules use a doubled leading slash for an absolute
+      # filesystem path. result_file is already absolute, so the extra slash
+      # is intentional: Edit(//home/.../reviewer-result.md).
+      --allowedTools "Edit(/$result_file)"
       --disallowedTools Bash "mcp__*"
     )
   else
