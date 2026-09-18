@@ -25,8 +25,16 @@ Usage:
 
 `start` and `resume` are synchronous foreground operations. The explicit
 `*-background` forms detach this wrapper, retain the Claude process and state,
-and are inspected with `status`; they do not use the Claude daemon. Every
-review consumes Claude usage. No retry or duplicate review is automatic.
+and are inspected with `status`; they do not use the Claude daemon. Never stop
+an Opus process after launch. Every review consumes Claude usage. A normal
+same-session re-review selected after fixing findings needs no extra approval;
+technical retries and duplicate reviews are never automatic.
+
+A real Opus call from a network-restricted Codex sandbox may require explicit
+escalation to network-enabled command execution before launch. Authentication
+success alone does not prove Anthropic API reachability from the sandbox.
+If status reports process liveness as unknown, ps was denied; escalate
+execution permission and rerun status without changing the review state.
 
 All review state is below the current Git worktree's tmp/luna-primary-engineer/
 reviews directory. An explicit STATE_DIR/GROUP_DIR must be one direct child of
@@ -118,7 +126,8 @@ run_foreground() {
 $(result_instruction "$result_file" "$HANDOFF_MODE")"
   mkdir -p "$(dirname "$result_file")" "$(dirname "$stdout_file")" "$(dirname "$stderr_file")" "$(dirname "$exit_file")"
   luna_primary_engineer_run_foreground \
-    "$result_file" "$stdout_file" "$stderr_file" "$exit_file" "$HANDOFF_MODE" \
+    "$result_file" "$stdout_file" "$stderr_file" "$exit_file" \
+    "$(dirname "$exit_file")/runner_pid" "$(dirname "$exit_file")/claude_pid" "$HANDOFF_MODE" \
     "${BASE_ARGS[@]}" "$@" --add-dir "$add_dir" -- "$prompt"
 }
 
@@ -153,6 +162,7 @@ run_review() {
   printf '%s\n' "$attempt_dir" > "$state_dir/last_attempt"
   printf 'running\n' > "$state_dir/stage"
   rm -f "$state_dir/blocked_reason"
+  luna_primary_engineer_clear_user_confirmation "$state_dir"
 
   before="$attempt_dir/repository-before.txt"
   after="$attempt_dir/repository-after.txt"
@@ -170,6 +180,7 @@ run_review() {
 
   if ! cmp -s "$before" "$after"; then
     printf 'failed\n' > "$state_dir/stage"
+    luna_primary_engineer_require_user_confirmation "$state_dir" reviewer_boundary_escape
     report_run_failure "$state_dir" "$attempt_dir" "$result_file" "$stdout_file" "$stderr_file" "$exit_file" "reviewer write escaped the read-only implementation boundary"
     return 19
   fi
@@ -178,11 +189,13 @@ run_review() {
     if luna_primary_engineer_review_network_failure "$stdout_file" "$stderr_file"; then
       printf 'blocked\n' > "$state_dir/stage"
       printf 'network\n' > "$state_dir/blocked_reason"
+      luna_primary_engineer_require_user_confirmation "$state_dir" network_failure
       report_run_failure "$state_dir" "$attempt_dir" "$result_file" "$stdout_file" "$stderr_file" "$exit_file" "Claude transport/API failure"
       echo "ERROR: preserve this state; retry only after explicit approval and network recovery." >&2
       return 11
     fi
     printf 'failed\n' > "$state_dir/stage"
+    luna_primary_engineer_require_user_confirmation "$state_dir" claude_exited_without_valid_result
     report_run_failure "$state_dir" "$attempt_dir" "$result_file" "$stdout_file" "$stderr_file" "$exit_file" "Claude exited non-zero"
     return "$rc"
   fi
@@ -191,6 +204,7 @@ run_review() {
     review)
       if ! luna_primary_engineer_review_contract_complete "$result_file"; then
         printf 'failed\n' > "$state_dir/stage"
+        luna_primary_engineer_require_user_confirmation "$state_dir" invalid_review_result
         report_run_failure "$state_dir" "$attempt_dir" "$result_file" "$stdout_file" "$stderr_file" "$exit_file" "review contract is missing or incomplete"
         return 18
       fi
@@ -198,6 +212,7 @@ run_review() {
     seed)
       if ! grep -Fqx 'SEED_READY' "$result_file"; then
         printf 'failed\n' > "$state_dir/stage"
+        luna_primary_engineer_require_user_confirmation "$state_dir" invalid_seed_result
         report_run_failure "$state_dir" "$attempt_dir" "$result_file" "$stdout_file" "$stderr_file" "$exit_file" "seed artifact is not exactly SEED_READY"
         return 18
       fi
@@ -205,6 +220,7 @@ run_review() {
     artifact)
       if [[ ! -s "$result_file" ]]; then
         printf 'failed\n' > "$state_dir/stage"
+        luna_primary_engineer_require_user_confirmation "$state_dir" empty_panel_result
         report_run_failure "$state_dir" "$attempt_dir" "$result_file" "$stdout_file" "$stderr_file" "$exit_file" "panel artifact is empty"
         return 18
       fi
@@ -217,9 +233,11 @@ run_review() {
 
   luna_primary_engineer_adopt_result "$result_file" "$state_dir/result.txt" || {
     printf 'failed\n' > "$state_dir/stage"
+    luna_primary_engineer_require_user_confirmation "$state_dir" result_adoption_failed
     report_run_failure "$state_dir" "$attempt_dir" "$result_file" "$stdout_file" "$stderr_file" "$exit_file" "designated result could not be adopted"
     return 18
   }
+  luna_primary_engineer_clear_user_confirmation "$state_dir"
   printf 'done\n' > "$state_dir/stage"
 }
 
@@ -281,34 +299,51 @@ run_single_review() {
 }
 
 launch_background() {
-  local state_dir="$1" kind="$2" pid previous_stage
+  local state_dir="$1" kind="$2" pid previous_stage old_state
   shift 2
   if [[ -f "$state_dir/background_pid" ]]; then
     local old_pid
     old_pid="$(cat "$state_dir/background_pid" 2>/dev/null || true)"
-    if [[ "$old_pid" =~ ^[1-9][0-9]*$ ]] && kill -0 "$old_pid" 2>/dev/null; then
-      echo "ERROR: a background operation is already attached to this state: $state_dir" >&2
-      return 15
-    fi
+    old_state="$(luna_primary_engineer_process_state "$old_pid")"
+    case "$old_state" in
+      alive)
+        echo "ERROR: a background operation is already attached to this state: $state_dir" >&2
+        return 15
+        ;;
+      unknown)
+        echo "ERROR: cannot prove the existing background process is gone; ps was denied. Escalate execution permission and rerun status before relaunching: $state_dir" >&2
+        return 15
+        ;;
+    esac
   fi
   previous_stage="$(cat "$state_dir/stage" 2>/dev/null || true)"
   printf '%s\n' "$previous_stage" > "$state_dir/background_parent_stage"
   printf '%s\n' "$kind" > "$state_dir/background_kind"
   printf 'queued\n' > "$state_dir/stage"
-  nohup bash "$SCRIPT_PATH" "$@" >"$state_dir/background.log" 2>&1 < /dev/null &
+  # Prefer a new session/process group when the host provides setsid. Keep a
+  # nohup fallback for macOS installations without that utility.
+  if command -v setsid >/dev/null 2>&1; then
+    nohup setsid bash "$SCRIPT_PATH" "$@" >"$state_dir/background.log" 2>&1 < /dev/null &
+  else
+    set -m
+    nohup bash "$SCRIPT_PATH" "$@" >"$state_dir/background.log" 2>&1 < /dev/null &
+    set +m
+  fi
   pid=$!
   printf '%s\n' "$pid" > "$state_dir/background_pid"
   printf 'BACKGROUND_PID=%s\nSTATE_DIR=%s\n' "$pid" "$state_dir"
 }
 
 retry_initial_review() {
-  local state_dir="$1" parent_stage session_id packet_abs review_cwd retry_dir n rc
+  local state_dir="$1" parent_stage session_id packet_abs review_cwd retry_dir n rc attempt_dir
   parent_stage="$(cat "$state_dir/stage" 2>/dev/null || true)"
-  if [[ "$parent_stage" == failed && ! -f "$state_dir/current_round" ]] && \
-    luna_primary_engineer_review_network_failure "$state_dir/result.txt" "$state_dir/stdout.txt" "$state_dir/stderr.txt"; then
-    printf 'blocked\n' > "$state_dir/stage"
-    printf 'network\n' > "$state_dir/blocked_reason"
-    parent_stage=blocked
+  if [[ "$parent_stage" == failed && ! -f "$state_dir/current_round" ]]; then
+    attempt_dir="$(luna_primary_engineer_latest_attempt_dir "$state_dir" 2>/dev/null || true)"
+    if [[ -n "$attempt_dir" ]] && luna_primary_engineer_review_network_failure "$attempt_dir/stdout.txt" "$attempt_dir/stderr.txt"; then
+      printf 'blocked\n' > "$state_dir/stage"
+      printf 'network\n' > "$state_dir/blocked_reason"
+      parent_stage=blocked
+    fi
   fi
   [[ "$parent_stage" == blocked && "$(cat "$state_dir/blocked_reason" 2>/dev/null || true)" == network ]] || {
     echo "ERROR: only an explicitly network-blocked initial review can use retry: $state_dir" >&2
@@ -398,8 +433,12 @@ case "$MODE" in
       PARENT_STAGE="$(cat "$STATE_DIR/background_parent_stage" 2>/dev/null || true)"
     fi
     LEGACY_ROUND="$(cat "$STATE_DIR/current_round" 2>/dev/null || true)"
-    if [[ "$PARENT_STAGE" == failed && "$LEGACY_ROUND" == rereview-* ]] && \
-      luna_primary_engineer_review_network_failure "$STATE_DIR/$LEGACY_ROUND/result.txt" "$STATE_DIR/$LEGACY_ROUND/attempt-1/stdout.txt" "$STATE_DIR/$LEGACY_ROUND/attempt-1/stderr.txt"; then
+    LEGACY_ATTEMPT=""
+    if [[ "$LEGACY_ROUND" == rereview-* ]]; then
+      LEGACY_ATTEMPT="$(luna_primary_engineer_latest_attempt_dir "$STATE_DIR/$LEGACY_ROUND" 2>/dev/null || true)"
+    fi
+    if [[ "$PARENT_STAGE" == failed && "$LEGACY_ROUND" == rereview-* && -n "$LEGACY_ATTEMPT" ]] && \
+      luna_primary_engineer_review_network_failure "$LEGACY_ATTEMPT/stdout.txt" "$LEGACY_ATTEMPT/stderr.txt"; then
       printf 'blocked\n' > "$STATE_DIR/stage"
       printf 'network\n' > "$STATE_DIR/blocked_reason"
       printf 'blocked\n' > "$STATE_DIR/$LEGACY_ROUND/stage"
@@ -412,10 +451,11 @@ case "$MODE" in
     }
     if [[ "$PARENT_STAGE" == failed ]]; then
       FAILED_ROUND="$(cat "$STATE_DIR/current_round" 2>/dev/null || true)"
-      [[ "$FAILED_ROUND" == rereview-* && "$(cat "$STATE_DIR/$FAILED_ROUND/stage" 2>/dev/null || true)" == failed ]] || {
+      FAILED_ROUND_STAGE="$(cat "$STATE_DIR/$FAILED_ROUND/stage" 2>/dev/null || true)"
+      if [[ "$FAILED_ROUND" != rereview-* || ( "$FAILED_ROUND_STAGE" != failed && ! ( "$FAILED_ROUND_STAGE" == done && "$(cat "$STATE_DIR/failure_reason" 2>/dev/null || true)" == process_gone_without_result ) ) ]]; then
         echo "ERROR: failed re-review state is not retryable: $STATE_DIR" >&2
         exit 10
-      }
+      fi
     fi
     if [[ "$PARENT_STAGE" == blocked ]]; then
       BLOCKED_ROUND="$(cat "$STATE_DIR/current_round" 2>/dev/null || true)"
@@ -460,6 +500,7 @@ case "$MODE" in
       cp -- "$ROUND/result.txt" "$STATE_DIR/result.txt"
       cp -- "$ROUND/run_exit_code" "$STATE_DIR/run_exit_code"
       rm -f "$STATE_DIR/blocked_reason"
+      luna_primary_engineer_clear_user_confirmation "$STATE_DIR"
       printf 'done\n' > "$STATE_DIR/stage"
       show_result "$STATE_DIR"
     else
@@ -473,6 +514,8 @@ case "$MODE" in
         printf 'failed\n' > "$ROUND/stage"
         printf 'failed\n' > "$STATE_DIR/stage"
       fi
+      if [[ -f "$ROUND/failure_reason" ]]; then cp -- "$ROUND/failure_reason" "$STATE_DIR/failure_reason"; fi
+      if [[ -f "$ROUND/user_confirmation_required" ]]; then cp -- "$ROUND/user_confirmation_required" "$STATE_DIR/user_confirmation_required"; fi
       exit "$resume_rc"
     fi
     ;;
@@ -542,6 +585,9 @@ case "$MODE" in
       else
         code=$?
         (( FAIL == 0 )) && FAIL="$code"
+        if [[ "$(cat "$D/stage" 2>/dev/null || true)" == blocked && "$(cat "$D/blocked_reason" 2>/dev/null || true)" == network ]]; then
+          break
+        fi
       fi
     done
     if (( FAIL != 0 )); then printf 'failed\n' > "$GROUP/stage"; exit "$FAIL"; fi

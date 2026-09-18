@@ -1,14 +1,16 @@
-Luna Primary Engineer v6.7.1
+Luna Primary Engineer v6.8.0
+- Invocation: allow_implicit_invocation=false; use only when explicitly selected
 - Primary: Luna Max/Fast + Ponytail FULL
 - Ordinary review: one Claude Opus synchronous reviewer with a persisted session, xhigh effort, read-only implementation boundary
 - Result handoff: designated absolute result file -> contract validation -> adopted result.txt; stdout/stderr are separate diagnostics
 - Ordinary contract: VERDICT, BLOCKERS, NONBLOCKING, TEST_GAPS, PREVIOUS_FINDINGS
-- Re-review: the same Claude session continues synchronously with the fix delta
+- Re-review: same-session resume without extra approval when finding importance, fix scope, or regression risk is high; skip only when all three are low
 - Workspace: current Git worktree tmp/luna-primary-engineer/reviews/<unique-id>; no system temporary directories or symlinked review roots
-- Lifecycle: foreground start/resume; explicit wrapper background/status forms when the caller must stop waiting; no Claude daemon dependency
-- Retry discipline: empty output, invalid result, timeout, or transport failure never auto-launches another review; retry/re-review requires explicit approval
+- Lifecycle: foreground start/resume; explicit wrapper background/status forms; runner/Claude PID tracking; launched Opus processes are never terminated
+- Retry discipline: technical and process-loss reruns require approval and never auto-launch; ordinary risk-selected fix re-review does not require extra approval
+- Network: Codex sandbox execution may need explicit escalation for Anthropic API access before an Opus launch
 - Permission discipline: dontAsk + permission-prompts none + Read/Glob/Grep + Write scoped by exact absolute Edit(//path) only; generic Edit/Bash/notebook/MCP unavailable
-- Verification: bash scripts/self-test.sh covers designated-file success with empty stdout, framed fallback, contract failures, workspace guards, sticky review, network-block retry, dual, panel, and static path checks
+- Verification: bash scripts/self-test.sh covers designated-file success, PID state, process-loss confirmation, safe handoff, contract failures, sticky review, network retry, dual, panel, and static guards
 - Dual high-risk review: neutral foreground Opus seed -> two blind independent foreground reviewers
 - Review fallback: Luna Max/Standard, read-only, no Ponytail, preflight-only
 - Difficult-task advisory panel: neutral foreground Opus seed -> 2-6 role-diverse foreground calls, sequentially

@@ -83,11 +83,11 @@ When a second opinion is useful, Claude Code Opus reviews the change in read-onl
 
 In normal use, ask the Codex session, “Have Opus review this change too.” If Claude Code is unavailable before the review starts, the Codex fallback reviewer can be used instead. Once an Opus review has started, the workflow does not switch reviewers automatically while waiting for its result.
 
-Re-reviews continue the Opus session used for the initial review.
+After fixes, Luna evaluates finding importance, fix scope, and regression risk. If any axis is high, it continues the initial Opus session for re-review without another user confirmation. If all three are low, it skips re-review and reports the focused checks and rationale. Technical reruns after network, result, or process failures still require user confirmation.
 
 Reviews can take several minutes. Claude API and stream timeouts default to 10 minutes. The wrapper validates a designated result file rather than trusting Claude's stdout; stdout and stderr are retained separately for diagnostics, so an empty stdout can still be a successful review. Review state is stored under `tmp/luna-primary-engineer/reviews/` inside the repository.
 
-Normal `start` and `resume` calls wait synchronously. If the caller must stop waiting, use the explicit `start-background` or `resume-background` form and inspect the same state with `status`. Retries and re-reviews consume Claude usage and never start automatically without an explicit decision. See the [Claude integration reference](references/claude-integration.md) for details.
+Normal `start` and `resume` calls wait synchronously. If the caller must stop waiting, use the explicit `start-background` or `resume-background` form and inspect the same state with `status`. Never stop an Opus process after launch. If both the runner and Claude PIDs disappear without a result, `status` reports a failed state that requires user confirmation and never relaunches automatically. If either liveness value is `unknown`, the sandbox denied `ps`; escalate execution permission and rerun `status`. See the [Claude integration reference](references/claude-integration.md) for details.
 
 ## Troubleshooting
 
@@ -115,7 +115,7 @@ If `ANTHROPIC_API_KEY` is set, Claude Code may use an API-billed authentication 
 
 ### Review stops with `Request timed out`
 
-`claude auth status` can succeed even when the Codex sandbox cannot reach the Anthropic API. If the review state is `stage=blocked` with `blocked_reason=network`, explicitly approve a retry and then retry the same state from a network-enabled command environment:
+`claude auth status` can succeed even when the Codex sandbox cannot reach the Anthropic API. A real Opus review may require approving escalation of the command to network-enabled execution; obtain that permission before launch when needed. If the review state is `stage=blocked` with `blocked_reason=network`, explicitly approve a retry and then retry the same state from a network-enabled command environment:
 
 ```bash
 bash scripts/claude-review.sh retry STATE_DIR

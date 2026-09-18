@@ -17,8 +17,14 @@ Usage:
 
 ROLES_DIR contains 2..6 *.md or *.txt role files. Panel state is stored below
 the current worktree's tmp/luna-primary-engineer/reviews directory. The panel
-seed and roles run sequentially in the foreground; there is no automatic retry
-or duplicate launch. Every role consumes Claude usage.
+seed and roles run sequentially in the foreground. Never stop an Opus process
+after launch. There is no automatic retry or duplicate launch, and every role
+consumes Claude usage.
+
+A real Opus call from a network-restricted Codex sandbox may require explicit
+escalation to network-enabled command execution before launch.
+If status reports process liveness as unknown, ps was denied; escalate
+execution permission and rerun status without changing the review state.
 TXT
 }
 
@@ -85,7 +91,8 @@ run_foreground() {
 $(result_instruction "$result_file" "$HANDOFF_MODE")"
   mkdir -p "$(dirname "$result_file")" "$(dirname "$stdout_file")" "$(dirname "$stderr_file")" "$(dirname "$exit_file")"
   luna_primary_engineer_run_foreground \
-    "$result_file" "$stdout_file" "$stderr_file" "$exit_file" "$HANDOFF_MODE" \
+    "$result_file" "$stdout_file" "$stderr_file" "$exit_file" \
+    "$(dirname "$exit_file")/runner_pid" "$(dirname "$exit_file")/claude_pid" "$HANDOFF_MODE" \
     "${BASE_ARGS[@]}" "$@" --add-dir "$add_dir" -- "$prompt"
 }
 
@@ -114,6 +121,7 @@ run_artifact() {
   printf '%s\n' "$attempt_dir" > "$state_dir/last_attempt"
   printf 'running\n' > "$state_dir/stage"
   rm -f "$state_dir/blocked_reason"
+  luna_primary_engineer_clear_user_confirmation "$state_dir"
   before="$attempt_dir/repository-before.txt"
   after="$attempt_dir/repository-after.txt"
   luna_primary_engineer_capture_repo_scope "$review_cwd" "$before"
@@ -125,6 +133,7 @@ run_artifact() {
   cp -- "$exit_file" "$state_dir/run_exit_code"
   if ! cmp -s "$before" "$after"; then
     printf 'failed\n' > "$state_dir/stage"
+    luna_primary_engineer_require_user_confirmation "$state_dir" reviewer_boundary_escape
     luna_primary_engineer_report_technical_failure "$state_dir" "$attempt_dir" "$result_file" "$stdout_file" "$stderr_file" "$exit_file" "reviewer write escaped the read-only implementation boundary"
     return 19
   fi
@@ -132,10 +141,12 @@ run_artifact() {
     if luna_primary_engineer_review_network_failure "$stdout_file" "$stderr_file"; then
       printf 'blocked\n' > "$state_dir/stage"
       printf 'network\n' > "$state_dir/blocked_reason"
+      luna_primary_engineer_require_user_confirmation "$state_dir" network_failure
       luna_primary_engineer_report_technical_failure "$state_dir" "$attempt_dir" "$result_file" "$stdout_file" "$stderr_file" "$exit_file" "Claude transport/API failure"
       return 11
     fi
     printf 'failed\n' > "$state_dir/stage"
+    luna_primary_engineer_require_user_confirmation "$state_dir" claude_exited_without_valid_result
     luna_primary_engineer_report_technical_failure "$state_dir" "$attempt_dir" "$result_file" "$stdout_file" "$stderr_file" "$exit_file" "Claude exited non-zero"
     return "$rc"
   fi
@@ -143,6 +154,7 @@ run_artifact() {
     seed)
       if ! grep -Fqx 'SEED_READY' "$result_file"; then
         printf 'failed\n' > "$state_dir/stage"
+        luna_primary_engineer_require_user_confirmation "$state_dir" invalid_seed_result
         luna_primary_engineer_report_technical_failure "$state_dir" "$attempt_dir" "$result_file" "$stdout_file" "$stderr_file" "$exit_file" "seed artifact is not exactly SEED_READY"
         return 18
       fi
@@ -150,6 +162,7 @@ run_artifact() {
     artifact)
       if [[ ! -s "$result_file" ]]; then
         printf 'failed\n' > "$state_dir/stage"
+        luna_primary_engineer_require_user_confirmation "$state_dir" empty_panel_result
         luna_primary_engineer_report_technical_failure "$state_dir" "$attempt_dir" "$result_file" "$stdout_file" "$stderr_file" "$exit_file" "panel artifact is empty"
         return 18
       fi
@@ -158,9 +171,11 @@ run_artifact() {
   esac
   luna_primary_engineer_adopt_result "$result_file" "$state_dir/result.txt" || {
     printf 'failed\n' > "$state_dir/stage"
+    luna_primary_engineer_require_user_confirmation "$state_dir" result_adoption_failed
     luna_primary_engineer_report_technical_failure "$state_dir" "$attempt_dir" "$result_file" "$stdout_file" "$stderr_file" "$exit_file" "designated result could not be adopted"
     return 18
   }
+  luna_primary_engineer_clear_user_confirmation "$state_dir"
   printf 'done\n' > "$state_dir/stage"
 }
 
@@ -241,6 +256,9 @@ case "$MODE" in
         cp -- "$D/result.txt" "$D/initial-result.txt"
       else
         code=$?; (( FAIL == 0 )) && FAIL="$code"
+        if [[ "$(cat "$D/stage" 2>/dev/null || true)" == blocked && "$(cat "$D/blocked_reason" 2>/dev/null || true)" == network ]]; then
+          break
+        fi
       fi
     done < "$OUTPUT/role-names.txt"
     if (( FAIL != 0 )); then printf 'failed\n' > "$OUTPUT/stage"; exit "$FAIL"; fi
@@ -276,9 +294,14 @@ case "$MODE" in
     if run_artifact "$ROUND" \
       "Continue this panel expert's work in a fresh foreground turn. Read the previous result at: $CHILD_ABS/previous-result.txt and the new delta/question at: $CHILD_ABS/followup.md . Stay within the same decision domain, do not ask questions or edit files, and finish with the compact panel artifact from your system instructions." \
       "$PANEL_ROOT" artifact "$(cat "$PANEL_ROOT/cwd")"; then
-      cp -- "$ROUND/result.txt" "$BRANCH/result.txt"; cp -- "$ROUND/run_exit_code" "$BRANCH/run_exit_code"; printf 'done\n' > "$BRANCH/stage"; cat "$BRANCH/result.txt"
+      cp -- "$ROUND/result.txt" "$BRANCH/result.txt"; cp -- "$ROUND/run_exit_code" "$BRANCH/run_exit_code"
+      luna_primary_engineer_clear_user_confirmation "$BRANCH"
+      printf 'done\n' > "$BRANCH/stage"; cat "$BRANCH/result.txt"
     else
-      code=$?; printf 'failed\n' > "$ROUND/stage"; printf 'failed\n' > "$BRANCH/stage"; exit "$code"
+      code=$?; printf 'failed\n' > "$ROUND/stage"; printf 'failed\n' > "$BRANCH/stage"
+      if [[ -f "$ROUND/failure_reason" ]]; then cp -- "$ROUND/failure_reason" "$BRANCH/failure_reason"; fi
+      if [[ -f "$ROUND/user_confirmation_required" ]]; then cp -- "$ROUND/user_confirmation_required" "$BRANCH/user_confirmation_required"; fi
+      exit "$code"
     fi
     ;;
 

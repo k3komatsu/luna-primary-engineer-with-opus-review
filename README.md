@@ -83,11 +83,11 @@ Ponytailは、必要な変更だけに集中し、不要な抽象化や依存を
 
 通常はCodexセッションで「この変更をOpusにもレビューさせて」と依頼するだけで使えます。Claude Codeをレビュー開始前に利用できない場合は、Codex内のフォールバックレビュアーを使えます。Opusのレビュー開始後は、結果が返るまで別のレビュアーへ自動で切り替えません。
 
-修正後の再レビューは、初回レビューのOpusセッションを続けて実行します。
+修正後は、指摘の重要度・修正範囲・回帰リスクを評価します。いずれかが高ければ、追加のユーザー確認なしに初回レビューのOpusセッションを続けて再レビューします。3項目すべてが低ければ再レビューを省略し、Lunaが実行した確認と省略理由を報告します。ネットワーク障害、結果不備、プロセス消失などの技術的な再実行には、引き続きユーザー確認が必要です。
 
 レビューには数分かかることがあります。ClaudeのAPI・ストリーム待機時間は既定で10分です。レビュー結果はClaudeのstdoutではなく、指定した結果ファイルを検証して採用します。stdout/stderrは診断用に別保存されるため、stdoutが空でも完全な結果ファイルがあれば成功します。レビュー状態はリポジトリ内の`tmp/luna-primary-engineer/reviews/`に保存されます。
 
-通常の`start`と`resume`は完了まで待つ同期実行です。待機を呼び出し側から切り離す必要がある場合だけ、`start-background`または`resume-background`を使い、`status`で同じ状態を確認します。レビューの再試行・再レビューはClaudeの利用量を消費するため、明示的な判断なしには自動起動しません。詳細は[Claude連携のリファレンス](references/claude-integration.md)を参照してください。
+通常の`start`と`resume`は完了まで待つ同期実行です。待機を呼び出し側から切り離す必要がある場合だけ、`start-background`または`resume-background`を使い、`status`で同じ状態を確認します。一度起動したOpusプロセスは停止しません。runnerとClaudeのPIDが両方消え、結果もない場合、`status`はユーザー確認が必要な失敗として報告し、自動再実行しません。`RUNNER_ALIVE`または`CLAUDE_ALIVE`が`unknown`の場合は、sandboxに`ps`を拒否されています。実行権限を昇格して`status`を再実行します。詳細は[Claude連携のリファレンス](references/claude-integration.md)を参照してください。
 
 ## 困ったとき
 
@@ -115,7 +115,7 @@ export LUNA_PRIMARY_ENGINEER_CLAUDE=off
 
 ### `Request timed out` でレビューが止まる
 
-`claude auth status` が成功しても、CodexのsandboxからAnthropic APIへ接続できるとは限りません。レビュー state が `stage=blocked`、`blocked_reason=network` になった場合は、利用者が再試行を明示的に許可したうえで、ネットワーク利用可能なコマンド実行環境から同じ state を再試行します。
+`claude auth status` が成功しても、CodexのsandboxからAnthropic APIへ接続できるとは限りません。実際のOpusレビューでは、コマンドをネットワーク利用可能な実行へ権限昇格する許可が必要になることがあります。必要な場合はレビュー開始前に許可を取得します。レビュー state が `stage=blocked`、`blocked_reason=network` になった場合は、利用者が再試行を明示的に許可したうえで、ネットワーク利用可能なコマンド実行環境から同じ state を再試行します。
 
 ```bash
 bash scripts/claude-review.sh retry STATE_DIR

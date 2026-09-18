@@ -1,4 +1,4 @@
-# Escalation packet v6.7.1
+# Escalation packet v6.8.0
 
 Use for a sticky Opus follow-up, Sol (~20 Luna-equivalent fresh-input opportunity cost), or Astra (~50 LEU). Remove anything that cannot change the decision.
 

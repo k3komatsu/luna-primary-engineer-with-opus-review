@@ -107,8 +107,13 @@ claude() {
     printf '%s\n' 'Request timed out' >&2
     return 1
   fi
+  if [[ "${MOCK_DELAY:-0}" != 0 ]]; then sleep "$MOCK_DELAY"; fi
   if [[ "$LUNA_PRIMARY_ENGINEER_CLAUDE_RESULT_HANDOFF" == stdout ]]; then
     printf 'LUNA_RESULT_BEGIN\n'
+    if [[ "${MOCK_TRUNCATED:-0}" == 1 ]]; then
+      printf '%s\n' "$CONTRACT_TEXT"
+      return 0
+    fi
     if [[ "${MOCK_INCOMPLETE:-0}" == 1 ]]; then
       printf '%s\n' 'VERDICT: PASS'
     else
@@ -132,7 +137,29 @@ claude() {
     printf '%s\n' "$CONTRACT_TEXT" > "$LUNA_PRIMARY_ENGINEER_REVIEW_RESULT_PATH"
   fi
 }
-export -f claude
+
+# Keep process-list tests deterministic even when the enclosing Codex sandbox
+# denies the real ps command. Reserved high PIDs represent vanished processes.
+ps() {
+  if [[ "${MOCK_PS_DENIED:-0}" == 1 ]]; then
+    printf 'ps: operation not permitted\n' >&2
+    return 1
+  fi
+  if [[ "${MOCK_PS_UNKNOWN:-0}" == 1 ]]; then
+    printf 'ps: unexpected process-list failure\n' >&2
+    return 2
+  fi
+  if [[ "${1:-}" == -p && "${2:-}" =~ ^99999999[12]$ ]]; then return 1; fi
+  if [[ "${1:-}" == -p && "${2:-}" =~ ^[1-9][0-9]*$ ]]; then
+    if [[ " ${MOCK_ALIVE_PIDS:-} " == *" $2 "* ]]; then
+      printf '%s\n' "$2"
+      return 0
+    fi
+    return 1
+  fi
+  command ps "$@"
+}
+export -f claude ps
 export LUNA_PRIMARY_ENGINEER_CLAUDE=on
 export LUNA_PRIMARY_ENGINEER_CLAUDE_RESULT_HANDOFF=file
 MOCK_LOG="$SMOKE_DIR/claude-args.log"
@@ -145,7 +172,12 @@ MOCK_STDOUT_CONTRACT=0
 MOCK_PERMISSION_FAIL=0
 MOCK_NO_CONVERSATION_FAIL=0
 MOCK_STRICT_CLI=1
-export MOCK_LOG MOCK_FAIL MOCK_NETWORK_FAIL MOCK_MISSING_RESULT MOCK_EMPTY_RESULT MOCK_INCOMPLETE MOCK_STDOUT_CONTRACT MOCK_PERMISSION_FAIL MOCK_NO_CONVERSATION_FAIL MOCK_STRICT_CLI CONTRACT_TEXT
+MOCK_DELAY=0
+MOCK_PS_DENIED=0
+MOCK_PS_UNKNOWN=0
+MOCK_TRUNCATED=0
+MOCK_ALIVE_PIDS=""
+export MOCK_LOG MOCK_FAIL MOCK_NETWORK_FAIL MOCK_MISSING_RESULT MOCK_EMPTY_RESULT MOCK_INCOMPLETE MOCK_STDOUT_CONTRACT MOCK_PERMISSION_FAIL MOCK_NO_CONVERSATION_FAIL MOCK_STRICT_CLI MOCK_DELAY MOCK_PS_DENIED MOCK_PS_UNKNOWN MOCK_TRUNCATED MOCK_ALIVE_PIDS CONTRACT_TEXT
 
 PACKET="$TEST_INPUT/packet.md"
 DELTA="$TEST_INPUT/delta.md"
@@ -166,21 +198,166 @@ grep -Fq -- 'Read,Glob,Grep,Write' "$MOCK_LOG"
 ! grep -Fq -- 'NotebookEdit' "$MOCK_LOG"
 [[ ! -s "$REVIEW_STATE/attempt-1/stdout.txt" ]]
 luna_primary_engineer_review_contract_complete "$REVIEW_STATE/result.txt"
+[[ "$(cat "$REVIEW_STATE/attempt-1/runner_pid")" =~ ^[1-9][0-9]*$ ]]
+[[ "$(cat "$REVIEW_STATE/attempt-1/claude_pid")" =~ ^[1-9][0-9]*$ ]]
+REVIEW_STATUS="$(bash "$SCRIPT_DIR/claude-review.sh" status "$REVIEW_STATE")"
+grep -Eq '^RUNNER_PID=[1-9][0-9]*$' <<< "$REVIEW_STATUS"
+grep -Eq '^CLAUDE_PID=[1-9][0-9]*$' <<< "$REVIEW_STATUS"
 
 bash "$SCRIPT_DIR/claude-review.sh" resume "$REVIEW_STATE" "$DELTA" >/dev/null
+[[ ! -e "$REVIEW_STATE/user_confirmation_required" ]]
 grep -Fq -- '--resume' "$MOCK_LOG"
 grep -Fq -- "$REVIEW_SESSION_ID" "$MOCK_LOG"
 grep -Fq "$REVIEW_STATE/rereview-1/previous-result.txt" "$MOCK_LOG"
 bash "$SCRIPT_DIR/claude-job.sh" status "$REVIEW_STATE" >/dev/null
+bash "$SCRIPT_DIR/claude-job.sh" logs "$REVIEW_STATE" stdout >/dev/null
+bash "$SCRIPT_DIR/claude-job.sh" logs "$REVIEW_STATE" stderr >/dev/null
 
 BACKGROUND_STATE="$(luna_primary_engineer_new_review_dir)"
+MOCK_DELAY=0.5
+export MOCK_DELAY
 bash "$SCRIPT_DIR/claude-review.sh" start-background "$PACKET" "$BACKGROUND_STATE" smoke-background >/dev/null
+for _ in {1..50}; do
+  [[ -s "$BACKGROUND_STATE/attempt-1/claude_pid" ]] && break
+  sleep 0.01
+done
+MOCK_ALIVE_PIDS="$(cat "$BACKGROUND_STATE/attempt-1/runner_pid") $(cat "$BACKGROUND_STATE/attempt-1/claude_pid")"
+export MOCK_ALIVE_PIDS
+BACKGROUND_STATUS="$(bash "$SCRIPT_DIR/claude-review.sh" status "$BACKGROUND_STATE" || true)"
+grep -Fq 'RUNNER_ALIVE=1' <<< "$BACKGROUND_STATUS"
+grep -Fq 'CLAUDE_ALIVE=1' <<< "$BACKGROUND_STATUS"
+MOCK_ALIVE_PIDS=""
+export MOCK_ALIVE_PIDS
+MOCK_DELAY=0
+export MOCK_DELAY
 for _ in {1..50}; do
   [[ "$(cat "$BACKGROUND_STATE/stage" 2>/dev/null || true)" == done ]] && break
   sleep 0.02
 done
 [[ "$(cat "$BACKGROUND_STATE/stage")" == done ]]
 luna_primary_engineer_review_contract_complete "$BACKGROUND_STATE/result.txt"
+
+# A tracked run whose runner and Claude process both disappeared without an
+# adopted result becomes a failed state that requires user confirmation.
+LOST_STATE="$(luna_primary_engineer_new_review_dir)"
+mkdir "$LOST_STATE/attempt-1"
+printf 'running\n' > "$LOST_STATE/stage"
+printf '%s\n' "$LOST_STATE/attempt-1" > "$LOST_STATE/last_attempt"
+printf '999999991\n' > "$LOST_STATE/attempt-1/runner_pid"
+printf '999999992\n' > "$LOST_STATE/attempt-1/claude_pid"
+if LOST_STATUS="$(bash "$SCRIPT_DIR/claude-review.sh" status "$LOST_STATE" 2>&1)"; then
+  echo "FAIL: vanished processes without a result were not reported as failed" >&2
+  exit 1
+else
+  LOST_RC=$?
+fi
+[[ "$LOST_RC" == 12 ]]
+[[ "$(cat "$LOST_STATE/stage")" == failed ]]
+[[ "$(cat "$LOST_STATE/failure_reason")" == process_gone_without_result ]]
+[[ "$(cat "$LOST_STATE/user_confirmation_required")" == 1 ]]
+grep -Fq 'USER_CONFIRMATION_REQUIRED=1' <<< "$LOST_STATUS"
+grep -Fq 'RUNNER_ALIVE=0' <<< "$LOST_STATUS"
+grep -Fq 'CLAUDE_ALIVE=0' <<< "$LOST_STATUS"
+
+# Permission-denied process-list access is unknown, not proof of disappearance.
+UNKNOWN_STATE="$(luna_primary_engineer_new_review_dir)"
+mkdir "$UNKNOWN_STATE/attempt-1"
+printf 'running\n' > "$UNKNOWN_STATE/stage"
+printf '%s\n' "$UNKNOWN_STATE/attempt-1" > "$UNKNOWN_STATE/last_attempt"
+printf '12341\n' > "$UNKNOWN_STATE/attempt-1/runner_pid"
+printf '12342\n' > "$UNKNOWN_STATE/attempt-1/claude_pid"
+MOCK_PS_DENIED=1
+export MOCK_PS_DENIED
+if UNKNOWN_STATUS="$(bash "$SCRIPT_DIR/claude-review.sh" status "$UNKNOWN_STATE" 2>&1)"; then
+  echo "FAIL: a running state with unknown process-list access returned success" >&2
+  exit 1
+else
+  UNKNOWN_RC=$?
+fi
+MOCK_PS_DENIED=0
+export MOCK_PS_DENIED
+[[ "$UNKNOWN_RC" == 10 ]]
+[[ "$(cat "$UNKNOWN_STATE/stage")" == running ]]
+grep -Fq 'RUNNER_ALIVE=unknown' <<< "$UNKNOWN_STATUS"
+grep -Fq 'CLAUDE_ALIVE=unknown' <<< "$UNKNOWN_STATUS"
+grep -Fq 'PROCESS_LIST_PERMISSION_REQUIRED=1' <<< "$UNKNOWN_STATUS"
+
+# Any other ps failure is also unknown, not proof that both processes died.
+MOCK_PS_UNKNOWN=1
+export MOCK_PS_UNKNOWN
+if UNKNOWN_STATUS_2="$(bash "$SCRIPT_DIR/claude-review.sh" status "$UNKNOWN_STATE" 2>&1)"; then
+  echo "FAIL: an unrecognized process-list failure returned success" >&2
+  exit 1
+else
+  UNKNOWN_RC_2=$?
+fi
+MOCK_PS_UNKNOWN=0
+export MOCK_PS_UNKNOWN
+[[ "$UNKNOWN_RC_2" == 10 ]]
+[[ "$(cat "$UNKNOWN_STATE/stage")" == running ]]
+grep -Fq 'RUNNER_ALIVE=unknown' <<< "$UNKNOWN_STATUS_2"
+
+# A queued resume must not rewrite the already-completed previous round when
+# its detached wrapper disappears before creating the next round.
+QUEUED_STATE="$(luna_primary_engineer_new_review_dir)"
+mkdir "$QUEUED_STATE/rereview-1"
+printf 'queued\n' > "$QUEUED_STATE/stage"
+printf 'resume\n' > "$QUEUED_STATE/background_kind"
+printf 'done\n' > "$QUEUED_STATE/background_parent_stage"
+printf 'rereview-1\n' > "$QUEUED_STATE/current_round"
+printf 'done\n' > "$QUEUED_STATE/rereview-1/stage"
+printf '%s\n' "$CONTRACT_TEXT" > "$QUEUED_STATE/result.txt"
+printf '999999991\n' > "$QUEUED_STATE/background_pid"
+for metadata in packet_path session_id cwd handoff_mode; do cp "$REVIEW_STATE/$metadata" "$QUEUED_STATE/$metadata"; done
+if QUEUED_STATUS="$(bash "$SCRIPT_DIR/claude-review.sh" status "$QUEUED_STATE" 2>&1)"; then
+  echo "FAIL: disappeared queued resume unexpectedly returned success" >&2
+  exit 1
+else
+  QUEUED_RC=$?
+fi
+[[ "$QUEUED_RC" == 12 ]]
+[[ "$(cat "$QUEUED_STATE/stage")" == failed ]]
+[[ "$(cat "$QUEUED_STATE/rereview-1/stage")" == done ]]
+[[ "$(cat "$QUEUED_STATE/failure_reason")" == process_gone_without_result ]]
+bash "$SCRIPT_DIR/claude-review.sh" resume "$QUEUED_STATE" "$DELTA" >/dev/null
+[[ "$(cat "$QUEUED_STATE/stage")" == done ]]
+[[ "$(cat "$QUEUED_STATE/current_round")" == rereview-2 ]]
+
+# A lost run in the small round-creation window must still be reconciled.
+RACE_STATE="$(luna_primary_engineer_new_review_dir)"
+mkdir "$RACE_STATE/rereview-1" "$RACE_STATE/rereview-1/attempt-1"
+printf 'running\n' > "$RACE_STATE/stage"
+printf 'rereview-1\n' > "$RACE_STATE/current_round"
+printf '%s\n' "$RACE_STATE/rereview-1/attempt-1" > "$RACE_STATE/rereview-1/last_attempt"
+printf '999999991\n' > "$RACE_STATE/rereview-1/attempt-1/runner_pid"
+printf '999999992\n' > "$RACE_STATE/rereview-1/attempt-1/claude_pid"
+if RACE_STATUS="$(bash "$SCRIPT_DIR/claude-review.sh" status "$RACE_STATE" 2>&1)"; then
+  echo "FAIL: round-creation race unexpectedly returned success" >&2
+  exit 1
+else
+  RACE_RC=$?
+fi
+[[ "$RACE_RC" == 12 ]]
+[[ "$(cat "$RACE_STATE/stage")" == failed ]]
+[[ "$(cat "$RACE_STATE/rereview-1/stage")" == failed ]]
+
+# Unknown liveness must also prevent a background relaunch.
+RELAUNCH_STATE="$(luna_primary_engineer_new_review_dir)"
+printf 'done\n' > "$RELAUNCH_STATE/stage"
+printf '12341\n' > "$RELAUNCH_STATE/background_pid"
+MOCK_PS_DENIED=1
+export MOCK_PS_DENIED
+if bash "$SCRIPT_DIR/claude-review.sh" resume-background "$RELAUNCH_STATE" "$DELTA" >/dev/null 2>&1; then
+  echo "FAIL: unknown background liveness allowed a relaunch" >&2
+  exit 1
+else
+  RELAUNCH_RC=$?
+fi
+MOCK_PS_DENIED=0
+export MOCK_PS_DENIED
+[[ "$RELAUNCH_RC" == 15 ]]
+[[ "$(cat "$RELAUNCH_STATE/stage")" == done ]]
+[[ ! -e "$RELAUNCH_STATE/background.log" ]]
 
 # A CLI without path-scoped permission support uses a framed handoff while
 # keeping all write-capable tools disabled.
@@ -189,6 +366,19 @@ export LUNA_PRIMARY_ENGINEER_CLAUDE_RESULT_HANDOFF=stdout
 bash "$SCRIPT_DIR/claude-review.sh" start "$PACKET" "$FALLBACK_STATE" smoke-framed >/dev/null
 luna_primary_engineer_review_contract_complete "$FALLBACK_STATE/result.txt"
 grep -Fq -- '--disallowedTools' "$MOCK_LOG"
+TRUNCATED_STATE="$(luna_primary_engineer_new_review_dir)"
+MOCK_TRUNCATED=1
+export MOCK_TRUNCATED
+if bash "$SCRIPT_DIR/claude-review.sh" start "$PACKET" "$TRUNCATED_STATE" smoke-truncated >/dev/null 2>&1; then
+  echo "FAIL: truncated stdout frame unexpectedly succeeded" >&2
+  exit 1
+else
+  TRUNCATED_RC=$?
+fi
+MOCK_TRUNCATED=0
+export MOCK_TRUNCATED
+[[ "$TRUNCATED_RC" == 18 ]]
+[[ ! -s "$TRUNCATED_STATE/attempt-1/reviewer-result.md" ]]
 export LUNA_PRIMARY_ENGINEER_CLAUDE_RESULT_HANDOFF=file
 
 run_expected_invalid_result() {
@@ -208,6 +398,7 @@ run_expected_invalid_result() {
   fi
   [[ "$rc" == "$expected_rc" ]]
   [[ "$(cat "$state/stage")" == failed ]]
+  [[ "$(cat "$state/user_confirmation_required")" == 1 ]]
   grep -Fq -- 'stdout diagnostic' "$error_file"
   grep -Fq -- 'stderr diagnostic' "$error_file"
 }
@@ -242,6 +433,7 @@ fi
 [[ "$NETWORK_RC" == 11 ]]
 [[ "$(cat "$NETWORK_STATE/stage")" == blocked ]]
 [[ "$(cat "$NETWORK_STATE/blocked_reason")" == network ]]
+[[ "$(cat "$NETWORK_STATE/user_confirmation_required")" == 1 ]]
 MOCK_NETWORK_FAIL=0
 export MOCK_NETWORK_FAIL
 bash "$SCRIPT_DIR/claude-review.sh" retry "$NETWORK_STATE" >/dev/null
@@ -309,6 +501,21 @@ DUAL_GROUP="$(luna_primary_engineer_new_review_dir)"
 bash "$SCRIPT_DIR/claude-review.sh" dual-start "$PACKET" "$DUAL_GROUP" >/dev/null
 bash "$SCRIPT_DIR/claude-review.sh" dual-advance "$DUAL_GROUP" >/dev/null
 bash "$SCRIPT_DIR/claude-review.sh" dual-collect "$DUAL_GROUP" >/dev/null
+DUAL_NETWORK_GROUP="$(luna_primary_engineer_new_review_dir)"
+bash "$SCRIPT_DIR/claude-review.sh" dual-start "$PACKET" "$DUAL_NETWORK_GROUP" >/dev/null
+MOCK_NETWORK_FAIL=1
+export MOCK_NETWORK_FAIL
+if bash "$SCRIPT_DIR/claude-review.sh" dual-advance "$DUAL_NETWORK_GROUP" >/dev/null 2>&1; then
+  echo "FAIL: dual network failure unexpectedly succeeded" >&2
+  exit 1
+else
+  DUAL_NETWORK_RC=$?
+fi
+MOCK_NETWORK_FAIL=0
+export MOCK_NETWORK_FAIL
+[[ "$DUAL_NETWORK_RC" == 11 ]]
+[[ -f "$DUAL_NETWORK_GROUP/reviewer-1/last_attempt" ]]
+[[ ! -e "$DUAL_NETWORK_GROUP/reviewer-2/last_attempt" ]]
 ROLES_DIR="$(luna_primary_engineer_new_review_dir)"
 printf '%s\n' 'role one' > "$ROLES_DIR/one.md"
 printf '%s\n' 'role two' > "$ROLES_DIR/two.md"
@@ -318,6 +525,21 @@ PANEL_DIR="$(luna_primary_engineer_new_review_dir)"
 bash "$SCRIPT_DIR/claude-panel.sh" start "$PANEL_CONTEXT" "$ROLES_DIR" "$PANEL_DIR" >/dev/null
 bash "$SCRIPT_DIR/claude-panel.sh" advance "$PANEL_DIR" >/dev/null
 bash "$SCRIPT_DIR/claude-panel.sh" collect "$PANEL_DIR" >/dev/null
+PANEL_NETWORK_DIR="$(luna_primary_engineer_new_review_dir)"
+bash "$SCRIPT_DIR/claude-panel.sh" start "$PANEL_CONTEXT" "$ROLES_DIR" "$PANEL_NETWORK_DIR" >/dev/null
+MOCK_NETWORK_FAIL=1
+export MOCK_NETWORK_FAIL
+if bash "$SCRIPT_DIR/claude-panel.sh" advance "$PANEL_NETWORK_DIR" >/dev/null 2>&1; then
+  echo "FAIL: panel network failure unexpectedly succeeded" >&2
+  exit 1
+else
+  PANEL_NETWORK_RC=$?
+fi
+MOCK_NETWORK_FAIL=0
+export MOCK_NETWORK_FAIL
+[[ "$PANEL_NETWORK_RC" == 11 ]]
+[[ -f "$PANEL_NETWORK_DIR/one/last_attempt" ]]
+[[ ! -e "$PANEL_NETWORK_DIR/two/last_attempt" ]]
 
 STATIC_TARGETS=(
   "$SCRIPT_DIR/claude-common.sh"
@@ -330,6 +552,10 @@ if rg -n -S '\$\{TMPDIR|mktemp|/private/|/var/tmp|/tmp/' "${STATIC_TARGETS[@]}";
   exit 1
 fi
 for script in "${STATIC_TARGETS[@]}"; do bash -n "$script"; done
+if rg -n -S '(^|[^[:alnum:]_])(command[[:space:]]+)?(kill|pkill|killall)([[:space:]]|$)' "${STATIC_TARGETS[@]}"; then
+  echo "FAIL: review scripts contain a process-termination command" >&2
+  exit 1
+fi
 
 FALLBACK_AGENT="$SCRIPT_DIR/../codex-agents/luna_reviewer.toml"
 for marker in LUNA_CLAUDE_PREFLIGHT_FALLBACK CLAUDE_NOT_LAUNCHED; do
@@ -337,4 +563,6 @@ for marker in LUNA_CLAUDE_PREFLIGHT_FALLBACK CLAUDE_NOT_LAUNCHED; do
 done
 grep -Fq -- 'never invoke `luna_reviewer`' "$SCRIPT_DIR/../SKILL.md"
 
-echo "PASS: designated-file result, safe handoff, contract failures, workspace paths, sticky review, dual, panel, and static guards"
+grep -Fq 'allow_implicit_invocation: false' "$SCRIPT_DIR/../agents/openai.yaml"
+
+echo "PASS: designated-file result, PID state, process-loss confirmation, safe handoff, contract failures, sticky review, dual/panel recovery guards, implicit-invocation policy, and static guards"

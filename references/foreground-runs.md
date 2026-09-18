@@ -6,10 +6,13 @@
 queued/running
   -> done       designated result exists and passes its contract
   -> blocked    Claude exits with a recognizable network/API error
-  -> failed     Claude exits otherwise, writes an invalid result, or escapes the boundary
+  -> failed     Claude exits otherwise, writes an invalid result, escapes the boundary,
+                or all tracked processes disappear before result adoption
 ```
 
-`status` reads the stored state and background PID; it never starts a retry.
+`status` reads stored state and process PIDs. It may reconcile a stale
+running/queued state to failed when all tracked processes are gone without an
+adopted result, but it never starts a retry.
 `collect` is valid only for `stage=done` and validates the adopted
 `result.txt` again.
 
@@ -35,6 +38,8 @@ attempt-N/
   stdout.txt               # diagnostic only
   stderr.txt               # diagnostic only
   exit_code
+  runner_pid
+  claude_pid
   repository-before.txt
   repository-after.txt
 rereview-N/
@@ -52,6 +57,22 @@ waiting, use `start-background` or `resume-background`; those commands detach
 the wrapper while retaining the state and a PID for `status`. Do not cut a PTY
 and then launch another reviewer.
 
+Never terminate a launched Opus process, including initial review, re-review,
+dual, panel, and follow-up calls. `status` checks runner and Claude PIDs through
+the system process list without sending signals. If both are absent while the
+state is still running/queued and no adopted result exists, `status` changes
+the state to `failed`, writes
+`failure_reason=process_gone_without_result` and
+`user_confirmation_required=1`, and returns 12. Ask the user before another
+Opus call. After approval, start a fresh state for a lost initial review,
+resume the same session and fix delta when a lost re-review remains resumable,
+or start a fresh group for dual/panel work.
+
+If `ps` is denied by the sandbox, `RUNNER_ALIVE` or `CLAUDE_ALIVE` is
+`unknown` and `PROCESS_LIST_PERMISSION_REQUIRED=1`. This means process-list
+inspection needs execution-permission escalation. Do not infer process loss,
+change state, or relaunch; obtain escalation and rerun `status`.
+
 An empty stdout stream is harmless when the designated file is complete. A
 missing, empty, or incomplete designated file is a technical failure and its
 stdout/stderr diagnostics are reported. It is never an automatic retry
@@ -59,7 +80,10 @@ condition. A network-blocked state is retried only by an explicit user-approved
 `retry` or `resume` using the same ordinary session. CLI validation errors,
 unsupported permission rules, and `No conversation found` are not network
 blocks even if stdout also contains `Request timed out`; they remain terminal
-and must not cause a new session to be created automatically.
+and must not cause a new session to be created automatically. Ordinary
+same-session re-review after fixes is the only re-review that may proceed
+without another user approval, and only under the three-axis rule in the
+review protocol.
 
 If Claude preflight fails before launch, or the user disabled Claude before
 launch, use the Luna fallback with its explicit markers. Once Claude has

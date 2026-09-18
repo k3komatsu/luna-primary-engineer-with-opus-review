@@ -273,12 +273,13 @@ luna_primary_engineer_require_fresh_state_tree() {
 # mode the caller uses a framed, validated handoff because generic
 # Write/Edit/Bash is not enabled.
 luna_primary_engineer_run_foreground() {
-  local result_file="$1" stdout_file="$2" stderr_file="$3" exit_file="$4" handoff_mode="$5" rc=0
+  local result_file="$1" stdout_file="$2" stderr_file="$3" exit_file="$4"
+  local runner_pid_file="$5" claude_pid_file="$6" handoff_mode="$7" rc=0 claude_pid
   local api_timeout_ms="${API_TIMEOUT_MS:-600000}"
   local idle_timeout_ms="${CLAUDE_STREAM_IDLE_TIMEOUT_MS:-600000}"
   local byte_idle_timeout_ms="${CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS:-$idle_timeout_ms}"
   local first_byte_timeout_ms="${CLAUDE_STREAM_FIRST_BYTE_TIMEOUT_MS:-600000}"
-  shift 5
+  shift 7
   [[ "$handoff_mode" == file || "$handoff_mode" == stdout ]] || {
     echo "ERROR: unknown Claude result handoff mode: $handoff_mode" >&2
     return 2
@@ -287,12 +288,16 @@ luna_primary_engineer_run_foreground() {
     echo "ERROR: Claude timeout variables must be positive integers in milliseconds." >&2
     return 2
   fi
-  if API_TIMEOUT_MS="$api_timeout_ms" \
+  printf '%s\n' "$$" > "$runner_pid_file"
+  API_TIMEOUT_MS="$api_timeout_ms" \
     CLAUDE_STREAM_IDLE_TIMEOUT_MS="$idle_timeout_ms" \
     CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS="$byte_idle_timeout_ms" \
     CLAUDE_STREAM_FIRST_BYTE_TIMEOUT_MS="$first_byte_timeout_ms" \
     LUNA_PRIMARY_ENGINEER_REVIEW_RESULT_PATH="$result_file" \
-    claude "$@" >"$stdout_file" 2>"$stderr_file"; then
+    claude "$@" >"$stdout_file" 2>"$stderr_file" &
+  claude_pid=$!
+  printf '%s\n' "$claude_pid" > "$claude_pid_file"
+  if wait "$claude_pid"; then
     rc=0
   else
     rc=$?
@@ -331,15 +336,23 @@ luna_primary_engineer_result_handoff_mode() {
 }
 
 luna_primary_engineer_materialize_stdout_result() {
-  local stdout_file="$1" result_file="$2"
+  local stdout_file="$1" result_file="$2" candidate="${2}.partial"
   [[ -s "$stdout_file" ]] || return 1
-  awk '
+  rm -f "$candidate"
+  if ! awk '
     $0 == "LUNA_RESULT_BEGIN" { inside=1; found=1; next }
     $0 == "LUNA_RESULT_END" { inside=0; ended=1; next }
     inside { print }
     END { if (!found || !ended) exit 1 }
-  ' "$stdout_file" > "$result_file" || return 1
-  [[ -s "$result_file" ]]
+  ' "$stdout_file" > "$candidate"; then
+    rm -f "$candidate"
+    return 1
+  fi
+  if [[ ! -s "$candidate" ]]; then
+    rm -f "$candidate"
+    return 1
+  fi
+  mv -f "$candidate" "$result_file"
 }
 
 luna_primary_engineer_adopt_result() {
@@ -381,11 +394,78 @@ luna_primary_engineer_review_network_failure() {
   return 1
 }
 
+luna_primary_engineer_process_state() {
+  local pid="$1" output ps_rc
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || { printf 'dead\n'; return 0; }
+  if output="$(ps -p "$pid" -o pid= 2>&1)"; then
+    if grep -Eq '[0-9]' <<< "$output"; then printf 'alive\n'; else printf 'dead\n'; fi
+    return 0
+  else
+    ps_rc=$?
+  fi
+  if grep -Eiq 'operation not permitted|not permitted|permission denied|not authorized' <<< "$output"; then
+    printf 'unknown\n'
+  elif (( ps_rc == 1 )); then
+    printf 'dead\n'
+  else
+    printf 'unknown\n'
+  fi
+}
+
+luna_primary_engineer_process_alive() {
+  [[ "$(luna_primary_engineer_process_state "$1")" == alive ]]
+}
+
+luna_primary_engineer_require_user_confirmation() {
+  local state_dir="$1" reason="$2"
+  printf '%s\n' "$reason" > "$state_dir/failure_reason"
+  printf '1\n' > "$state_dir/user_confirmation_required"
+}
+
+luna_primary_engineer_clear_user_confirmation() {
+  local state_dir="$1"
+  rm -f "$state_dir/failure_reason" "$state_dir/user_confirmation_required"
+}
+
 luna_primary_engineer_capture_repo_scope() {
   local cwd="$1" output="$2" tmp_leaf
   tmp_leaf="$(luna_primary_engineer_tmp_leaf)"
+  # This porcelain snapshot is best-effort: an edit to an already-dirty path
+  # can produce the same line before and after. The exact Edit(path) rule is
+  # the actual reviewer write boundary; this check catches new escapes.
   git -C "$cwd" status --porcelain=v1 --untracked-files=all 2>/dev/null | \
     awk -v ignored_prefix="$tmp_leaf/" 'substr($0, 4, length(ignored_prefix)) != ignored_prefix { print }' > "$output"
+}
+
+luna_primary_engineer_active_monitor_dir() {
+  local state_dir="$1" stage current_round round_dir round_stage
+  stage="$(cat "$state_dir/stage" 2>/dev/null || printf 'unknown')"
+  current_round="$(cat "$state_dir/current_round" 2>/dev/null || printf '')"
+  if [[ "$stage" == running || "$stage" == queued ]] && [[ -n "$current_round" && -d "$state_dir/$current_round" ]]; then
+    round_dir="$state_dir/$current_round"
+    round_stage="$(cat "$round_dir/stage" 2>/dev/null || printf '')"
+    case "$round_stage" in
+      done|failed|blocked) ;;
+      *)
+        printf '%s\n' "$round_dir"
+        return 0
+        ;;
+    esac
+  fi
+  printf '%s\n' "$state_dir"
+}
+
+luna_primary_engineer_latest_attempt_dir() {
+  local state_dir="$1" monitor_dir current_round attempt_dir
+  monitor_dir="$state_dir"
+  current_round="$(cat "$state_dir/current_round" 2>/dev/null || printf '')"
+  if [[ -n "$current_round" && -d "$state_dir/$current_round" ]]; then
+    monitor_dir="$state_dir/$current_round"
+  fi
+  attempt_dir="$(cat "$monitor_dir/last_attempt" 2>/dev/null || printf '')"
+  [[ -n "$attempt_dir" ]] || return 1
+  [[ "$attempt_dir" == /* ]] || attempt_dir="$monitor_dir/$attempt_dir"
+  printf '%s\n' "$attempt_dir"
 }
 
 luna_primary_engineer_report_technical_failure() {
@@ -403,16 +483,58 @@ luna_primary_engineer_report_technical_failure() {
 }
 
 luna_primary_engineer_print_state_dir() {
-  local state_dir="$1" stage rc reason pid
+  local state_dir="$1" stage rc reason background_pid background_kind monitor_dir current_round attempt_dir
+  local runner_pid claude_pid runner_state claude_state runner_alive claude_alive
+  local dead_state=dead tracking=0 result_ready=0 confirmation process_list_permission_required=0
   [[ -d "$state_dir" ]] || { echo "ERROR: missing state directory: $state_dir" >&2; return 2; }
   stage="$(cat "$state_dir/stage" 2>/dev/null || printf 'unknown')"
   rc="$(cat "$state_dir/run_exit_code" 2>/dev/null || printf '')"
   reason="$(cat "$state_dir/blocked_reason" 2>/dev/null || printf '')"
-  pid="$(cat "$state_dir/background_pid" 2>/dev/null || printf '')"
-  printf 'STATE=%s\nEXIT_CODE=%s\nBLOCKED_REASON=%s\nBACKGROUND_PID=%s\nSTATE_DIR=%s\n' "$stage" "$rc" "$reason" "$pid" "$state_dir"
-  if [[ "$stage" == running || "$stage" == queued ]] && [[ "$pid" =~ ^[1-9][0-9]*$ ]]; then
-    if kill -0 "$pid" 2>/dev/null; then printf 'BACKGROUND_ALIVE=1\n'; else printf 'BACKGROUND_ALIVE=0\n'; fi
+  background_pid="$(cat "$state_dir/background_pid" 2>/dev/null || printf '')"
+  background_kind="$(cat "$state_dir/background_kind" 2>/dev/null || printf '')"
+  monitor_dir="$state_dir"
+  current_round="$(cat "$state_dir/current_round" 2>/dev/null || printf '')"
+  monitor_dir="$(luna_primary_engineer_active_monitor_dir "$state_dir")"
+  if [[ "$stage" == running || "$stage" == queued || "$stage" == seed_running || "$stage" == branches_running ]]; then
+    attempt_dir="$(cat "$monitor_dir/last_attempt" 2>/dev/null || printf '')"
+  else
+    attempt_dir="$(luna_primary_engineer_latest_attempt_dir "$state_dir" 2>/dev/null || printf '')"
   fi
+  runner_pid=""
+  claude_pid=""
+  if [[ -n "$attempt_dir" ]]; then
+    runner_pid="$(cat "$attempt_dir/runner_pid" 2>/dev/null || printf '')"
+    claude_pid="$(cat "$attempt_dir/claude_pid" 2>/dev/null || printf '')"
+  fi
+  if [[ "$(luna_primary_engineer_process_state "$background_pid")" == alive ]]; then
+    runner_pid="$background_pid"
+  elif [[ -z "$runner_pid" ]]; then
+    runner_pid="$background_pid"
+  fi
+  if [[ -n "$runner_pid" || -n "$claude_pid" ]]; then tracking=1; fi
+  runner_state="$(luna_primary_engineer_process_state "$runner_pid")"
+  claude_state="$(luna_primary_engineer_process_state "$claude_pid")"
+  case "$runner_state" in alive) runner_alive=1 ;; dead) runner_alive=0 ;; *) runner_alive=unknown ;; esac
+  case "$claude_state" in alive) claude_alive=1 ;; dead) claude_alive=0 ;; *) claude_alive=unknown ;; esac
+  if [[ "$runner_state" == unknown || "$claude_state" == unknown ]]; then process_list_permission_required=1; fi
+  if [[ -s "$monitor_dir/result.txt" ]]; then result_ready=1; fi
+  if [[ "$stage" == queued && "$background_kind" == resume ]]; then result_ready=0; fi
+
+  if [[ "$stage" == running || "$stage" == queued ]] && (( tracking == 1 && result_ready == 0 )) && [[ "$runner_state" == "$dead_state" && "$claude_state" == "$dead_state" ]]; then
+    printf 'failed\n' > "$state_dir/stage"
+    luna_primary_engineer_require_user_confirmation "$state_dir" process_gone_without_result
+    if [[ "$monitor_dir" != "$state_dir" ]]; then
+      printf 'failed\n' > "$monitor_dir/stage"
+      luna_primary_engineer_require_user_confirmation "$monitor_dir" process_gone_without_result
+    fi
+    stage=failed
+  fi
+
+  confirmation="$(cat "$state_dir/user_confirmation_required" 2>/dev/null || printf '0')"
+  printf 'STATE=%s\nEXIT_CODE=%s\nBLOCKED_REASON=%s\nFAILURE_REASON=%s\nUSER_CONFIRMATION_REQUIRED=%s\n' \
+    "$stage" "$rc" "$reason" "$(cat "$state_dir/failure_reason" 2>/dev/null || printf '')" "$confirmation"
+  printf 'BACKGROUND_PID=%s\nRUNNER_PID=%s\nRUNNER_ALIVE=%s\nCLAUDE_PID=%s\nCLAUDE_ALIVE=%s\nPROCESS_LIST_PERMISSION_REQUIRED=%s\nSTATE_DIR=%s\n' \
+    "$background_pid" "$runner_pid" "$runner_alive" "$claude_pid" "$claude_alive" "$process_list_permission_required" "$state_dir"
   case "$stage" in
     done) return 0 ;;
     running|queued|seed_running|branches_running) return 10 ;;

@@ -10,7 +10,9 @@ Primary implements + validates
   -> validated result contract (stdout is diagnostic only)
   -> same-state retry if network-blocked and explicitly approved
   -> Primary fixes findings
-  -> same-session synchronous re-review with fix delta
+  -> importance/scope/regression-risk decision
+  -> same-session synchronous re-review with fix delta if any axis is high
+  -> focused checks and documented skip if all axes are low
   -> repeat until PASS / accepted risk
 ```
 
@@ -34,6 +36,12 @@ new user turn, while the original packet and previous review remain in the
 conversation context. CLI permission errors and `No conversation found` are
 terminal technical failures, not retryable network states. The wrapper
 validates the designated result file and never retries because stdout is empty.
+
+An ordinary fix re-review does not need additional user approval when the
+finding is important, the fix is broad, or regression risk is high. Skip it
+only when all three axes are low, then run focused checks and report the reason.
+Technical recovery, including network, CLI, result-contract, or process-loss
+reruns, still requires explicit approval.
 
 ## High-risk dual review
 

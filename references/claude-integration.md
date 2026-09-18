@@ -17,6 +17,16 @@ non-persistent Claude sessions. Every call consumes Claude usage. No timeout,
 empty stdout, missing intermediate output, or transport error automatically
 starts another call.
 
+Each attempt stores its waiting runner PID and Claude PID. Never terminate a
+launched Opus process. `status` uses the system process list without signals;
+when both PIDs are gone, the state is still non-terminal, and no adopted result
+exists, it records `process_gone_without_result` and requires explicit user
+confirmation before another Opus call.
+If sandbox policy denies `ps`, liveness is reported as `unknown` with
+`PROCESS_LIST_PERMISSION_REQUIRED=1`, and no failure transition occurs. Treat
+that output as an instruction to obtain execution-permission escalation and
+rerun `status` with process-list access.
+
 ## Read-only boundary and result handoff
 
 The common options are:
@@ -33,8 +43,9 @@ The common options are:
 
 The reviewer system prompt gives one explicit exception: it may write the
 exact absolute designated result file and must never edit anything else. The
-wrapper also snapshots Git status before and after the call, so an escaped
-implementation edit fails the review.
+wrapper also snapshots Git status before and after the call as a best-effort
+detector for newly introduced changes; the exact `Edit(path)` permission is
+the actual read-only boundary.
 
 Claude Code uses the `Edit(path)` permission grammar to scope all file-editing
 tools, including the `Write` tool. For an already absolute shell variable, the
@@ -97,6 +108,11 @@ diagnostics remain available for an explicitly approved `retry` on the same
 state. CLI permission/argument errors and `No conversation found` take
 precedence over generic timeout text and are terminal until the user chooses
 a next step.
+
+In a network-restricted Codex sandbox, real Opus calls may require escalating
+the command to network-enabled execution. Obtain that authorization before
+launch when required. Successful `claude auth status` or `claude doctor`
+output does not prove that the sandbox can reach the Anthropic API.
 
 `ANTHROPIC_API_KEY` may indicate API-billed authentication and is reported by
 the helpers. The API, stream-idle, byte-idle, and first-byte timeout defaults

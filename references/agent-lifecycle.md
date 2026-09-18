@@ -10,6 +10,7 @@ review routing, integration, and user communication.
 ```text
 SYNCHRONOUS REVIEW -> DESIGNATED RESULT VALIDATION -> DONE -> FINDINGS
 SYNCHRONOUS REVIEW -> BLOCKED(network) -> EXPLICIT SAME-STATE RETRY
+RUNNING -> PROCESSES GONE + NO RESULT -> FAILED -> ASK USER
 FINDINGS -> PRIMARY_FIX -> STICKY SYNCHRONOUS RE-REVIEW
 RE-REVIEW -> DONE -> FIX AGAIN? -> STICKY RE-REVIEW
 PASS/ACCEPTED -> ARCHIVE RESULT FILES
@@ -22,6 +23,13 @@ the same conversation. If the caller must stop waiting, the explicit wrapper
 background forms retain the process and state for `status`; they are not a
 Claude daemon registry. A transport error preserves the same session as
 `stage=blocked`, but does not authorize a fallback or a new state.
+
+After a fix, re-review without another user approval only when finding
+importance, fix scope, or regression risk is high; skip only when all three are
+low and report focused checks. All technical reruns still require approval.
+Never terminate any launched Opus process. Attempts store runner and Claude
+PIDs; if both disappear before an adopted result, ask whether to run Opus again
+and do not relaunch automatically.
 
 ## High-risk dual review
 

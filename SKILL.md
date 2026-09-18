@@ -3,7 +3,7 @@ name: luna-primary-engineer
 description: Context-efficient Codex engineering workflow. Luna Max/Fast is the persistent Primary Engineer with Ponytail FULL; Claude Opus provides optional read-only foreground review and focused multi-angle advice; Luna workers are parallel-only; Sol/Astra are rare final advisors.
 ---
 
-# Luna Primary Engineer v6.7.1
+# Luna Primary Engineer v6.8.0
 
 Operate as the Primary Engineer, not as a manager that reflexively delegates.
 Luna owns investigation, planning, implementation, testing, integration, and
@@ -28,17 +28,40 @@ required validation, safety, compatibility, and architecture boundaries.
    `scripts/claude-review.sh start`.
 5. Wait for that foreground process to finish. Collect only a completed,
    validated result file.
-6. Fix concrete findings, then run `resume` with a fix delta. This continues
+6. Fix concrete findings, evaluate their importance, the fix scope, and
+   regression risk, then run `resume` when any axis is high. This continues
    the same Claude session and preserves the sticky re-review context.
-7. Finish when the review passes or Luna explicitly accepts residual risk.
+7. If all three axes are low, skip re-review, run focused checks, and report
+   the checks and skip rationale. Finish on PASS or accepted residual risk.
 
 Claude review is optional. Use `luna_reviewer` only when the Claude preflight
 fails before Claude is launched, or when the user disables Claude before
 launch. It is never a timeout, output, network, or in-flight fallback.
 
 Every Claude review, re-review, retry, dual branch, and panel role consumes
-Claude usage. Never retry, re-review, or duplicate a call without explicit
-user approval. An empty stdout stream is not a retry condition.
+Claude usage. An ordinary same-session re-review immediately after fixing
+findings may proceed without additional user approval under the decision rule
+below. Initial reviews, technical retries, process-loss reruns, dual reviews,
+and panel calls still require explicit user approval. An empty stdout stream
+is not a retry condition.
+
+## Re-review decision
+
+After fixing review findings, evaluate three axes:
+
+- finding importance is high for blockers or material correctness, security,
+  data-loss, compatibility, or public-contract concerns;
+- fix scope is broad when it crosses subsystems, public interfaces, shared
+  behavior, or multiple data-flow boundaries;
+- regression risk is high for shared logic, authentication, persistence or
+  migration, concurrency, protocols, broad compatibility, or weak coverage.
+
+If any axis is high, run a same-session `resume` with the fix delta without
+asking for additional user approval. If all axes are low, do not re-review;
+run focused checks and tell the user why re-review was skipped. Apply the same
+rule after later re-review fixes. A retry after network, CLI, result-contract,
+or process failure is technical recovery, not an ordinary fix re-review, and
+always requires explicit user approval.
 
 ## Opus single-flight rule
 
@@ -53,10 +76,18 @@ unknown:
   `Request timed out` from the waiting command as proof that Claude is done;
 - continue polling the same process/state when the caller can wait.
 
-Only an explicit `retry`, `resume`, or a new review requested by the user may
-spend another Claude turn. A network-blocked state is not a code-review
-verdict; it preserves the same session and diagnostics for an approved retry.
-A non-network `failed` state is terminal until the user decides what to do.
+Never stop a launched Opus process. Do not send SIGINT, SIGTERM, or SIGKILL,
+invoke `kill`, `pkill`, `killall`, or use an equivalent process-termination
+action for an initial review, re-review, dual review, panel role, or follow-up.
+If continuous waiting may not be possible, choose the explicit background
+form before launch.
+
+Only the ordinary fix re-review selected by the three-axis rule may spend
+another Claude turn without another user decision. Other retries, resumes, or
+new reviews require explicit approval. A network-blocked state is not a
+code-review verdict; it preserves the same session and diagnostics for an
+approved retry. A non-network `failed` state is terminal until the user
+decides what to do.
 
 The Luna fallback requires both literal markers
 `LUNA_CLAUDE_PREFLIGHT_FALLBACK` and `CLAUDE_NOT_LAUNCHED`, as described in
@@ -74,10 +105,18 @@ bash scripts/claude-review.sh status STATE_DIR
 bash scripts/claude-review.sh resume-background STATE_DIR FIX_DELTA
 ```
 
-These forms detach the wrapper with a persisted PID and state, then use the
-same `status`/`collect` files. They do not use the Claude daemon or Claude's
-own `--bg` session registry. A dead background PID with a non-terminal state
-is a failure to report, not a reason to launch another reviewer.
+These forms detach the wrapper with persisted runner and Claude PIDs, then use
+the same `status`/`collect` files. They do not use the Claude daemon or
+Claude's own `--bg` session registry. `status` checks the system process list
+without sending a signal. If both processes are gone while the state remains
+non-terminal and no adopted result exists, it records
+`failure_reason=process_gone_without_result`, reports
+`USER_CONFIRMATION_REQUIRED=1`, and returns the normal failed-state status.
+Ask the user whether to run Opus again; never relaunch automatically.
+If PID liveness is `unknown` or
+`PROCESS_LIST_PERMISSION_REQUIRED=1`, `ps` was rejected by the sandbox. Do not
+change state or relaunch. Request execution-permission escalation and rerun
+`status` with system process-list access.
 
 `dual-start`, `dual-advance`, and panel operations remain sequential foreground
 calls. The panel and dual paths use the same result-file and workspace rules.
@@ -119,9 +158,9 @@ including `Write`. The `--tools` allowlist exposes only `Read,Glob,Grep,Write`,
 and the wrapper denies Bash and MCP; it does not pass unsupported deny names
 such as `MultiEdit`. The reviewer system prompt explicitly says
 `指定結果ファイル以外は絶対に編集しない` and forbids editing implementation
-files. The wrapper validates the path, snapshots the repository status before
-and after the call, and rejects any implementation change that escapes the
-read-only boundary.
+files. The wrapper validates the path and snapshots the repository status
+before and after the call as a best-effort detector for newly introduced
+changes; the exact `Edit(path)` permission is the actual read-only boundary.
 
 When the shell variable already contains an absolute path such as
 `/home/.../reviewer-result.md`, pass `--allowedTools "Edit(/$result_file)"`.
@@ -230,9 +269,11 @@ Reviewer and panel calls use:
 If `ANTHROPIC_API_KEY` is set, treat Claude usage as potentially API-billed.
 Use `claude auth status` and `claude doctor` for authentication and transport
 diagnostics. Authentication success does not prove API reachability from a
-Codex sandbox. In a network-restricted Codex execution, the caller must obtain
-network-enabled command execution for a real Opus request; `claude doctor`
-success alone is not a review result.
+Codex sandbox. In a network-restricted Codex execution, a real Opus request
+may require escalating the sandbox command to network-enabled execution.
+Request that authorization before launch when needed; `claude auth status` or
+`claude doctor` success alone does not prove that the sandbox can reach the
+Anthropic API and is not a review result.
 
 ## Other roles
 
@@ -260,7 +301,9 @@ Luna Primary + Ponytail
   -> focused checks
   -> optional synchronous Claude review
   -> explicit retry only for a blocked transport state
-  -> Luna fixes and sticky synchronous re-review
+  -> Luna fixes and applies the three-axis re-review decision
+  -> sticky synchronous re-review when any axis is high
+  -> focused checks and documented skip when all axes are low
   -> accepted result
 ```
 
