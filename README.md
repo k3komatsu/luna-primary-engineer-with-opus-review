@@ -85,7 +85,9 @@ Ponytailは、必要な変更だけに集中し、不要な抽象化や依存を
 
 修正後の再レビューは、初回レビューのOpusセッションを続けて実行します。
 
-レビューには数分かかることがあります。ClaudeのAPI・ストリーム待機時間は既定で10分です。Codexの実行環境からAnthropic APIへ接続できない場合は、レビューを失敗扱いにせず同じセッションを保持し、ネットワーク利用可能な環境で再試行します。詳細は[Claude連携のリファレンス](references/claude-integration.md)を参照してください。
+レビューには数分かかることがあります。ClaudeのAPI・ストリーム待機時間は既定で10分です。レビュー結果はClaudeのstdoutではなく、指定した結果ファイルを検証して採用します。stdout/stderrは診断用に別保存されるため、stdoutが空でも完全な結果ファイルがあれば成功します。レビュー状態はリポジトリ内の`tmp/luna-primary-engineer/reviews/`に保存されます。
+
+通常の`start`と`resume`は完了まで待つ同期実行です。待機を呼び出し側から切り離す必要がある場合だけ、`start-background`または`resume-background`を使い、`status`で同じ状態を確認します。レビューの再試行・再レビューはClaudeの利用量を消費するため、明示的な判断なしには自動起動しません。詳細は[Claude連携のリファレンス](references/claude-integration.md)を参照してください。
 
 ## 困ったとき
 
@@ -113,7 +115,7 @@ export LUNA_PRIMARY_ENGINEER_CLAUDE=off
 
 ### `Request timed out` でレビューが止まる
 
-`claude auth status` が成功しても、CodexのsandboxからAnthropic APIへ接続できるとは限りません。レビュー state が `stage=blocked`、`blocked_reason=network` になった場合は、ネットワーク利用可能なコマンド実行環境で同じ state を再試行します。
+`claude auth status` が成功しても、CodexのsandboxからAnthropic APIへ接続できるとは限りません。レビュー state が `stage=blocked`、`blocked_reason=network` になった場合は、利用者が再試行を明示的に許可したうえで、ネットワーク利用可能なコマンド実行環境から同じ state を再試行します。
 
 ```bash
 bash scripts/claude-review.sh retry STATE_DIR

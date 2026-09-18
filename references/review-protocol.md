@@ -6,9 +6,9 @@ The review unit is a coherent completed change, not an individual edit.
 
 ```text
 Primary implements + validates
-  -> synchronous Opus review
-  -> same-state retry if network-blocked
-  -> result contract
+  -> synchronous Opus review to a designated result file
+  -> validated result contract (stdout is diagnostic only)
+  -> same-state retry if network-blocked and explicitly approved
   -> Primary fixes findings
   -> same-session synchronous re-review with fix delta
   -> repeat until PASS / accepted risk
@@ -18,17 +18,21 @@ Commands:
 
 ```bash
 claude-review.sh start REVIEW_PACKET STATE_DIR reviewer-1
+claude-review.sh start-background REVIEW_PACKET STATE_DIR reviewer-1
 claude-review.sh status STATE_DIR
 claude-review.sh collect STATE_DIR
 claude-review.sh retry STATE_DIR
 claude-review.sh resume STATE_DIR FIX_DELTA
+claude-review.sh resume-background STATE_DIR FIX_DELTA
 ```
 
-`retry` is only for a network/API-blocked initial review. It keeps the same
-state and Claude session, and should be run through network-enabled command
-execution. `resume` continues the Claude session created by `start` in a new
-foreground turn. The fix delta is supplied as the new user turn, while the
-original packet and previous review remain in the conversation context.
+`retry` is only for a network/API-blocked initial review after explicit user
+approval. It keeps the same state and Claude session, and should be run through
+network-enabled command execution. `resume` continues the Claude session
+created by `start` in a new foreground turn. The fix delta is supplied as the
+new user turn, while the original packet and previous review remain in the
+conversation context. The wrapper validates the designated result file and
+never retries because stdout is empty.
 
 ## High-risk dual review
 

@@ -18,6 +18,23 @@ check_file "$PRIVATE_PONYTAIL"
 for f in claude-common.sh claude-job.sh claude-review.sh claude-panel.sh self-test.sh; do
   check_file "${HOME}/.agents/skills/luna-primary-engineer/scripts/$f"
 done
+RUNTIME_SCRIPTS=(
+  "${HOME}/.agents/skills/luna-primary-engineer/scripts/claude-common.sh"
+  "${HOME}/.agents/skills/luna-primary-engineer/scripts/claude-review.sh"
+  "${HOME}/.agents/skills/luna-primary-engineer/scripts/claude-panel.sh"
+  "${HOME}/.agents/skills/luna-primary-engineer/scripts/claude-job.sh"
+)
+if rg -n -S '\$\{TMPDIR|mktemp|/private/|/var/tmp|/tmp/' "${RUNTIME_SCRIPTS[@]}" 2>/dev/null; then
+  echo "FAIL review scripts contain a system-temporary storage path"; FAIL=1
+else
+  echo "OK   review scripts do not construct system-temporary state paths"
+fi
+if [[ -f "${HOME}/.agents/skills/luna-primary-engineer/references/claude/reviewer-system.md" ]] && \
+  grep -Fq '指定結果ファイル以外は絶対に編集しない' "${HOME}/.agents/skills/luna-primary-engineer/references/claude/reviewer-system.md"; then
+  echo "OK   reviewer result-file-only exception is installed"
+else
+  echo "FAIL reviewer result-file-only exception is missing"; FAIL=1
+fi
 if [[ -f "${HOME}/.agents/skills/luna-primary-engineer/scripts/self-test.sh" ]] && bash "${HOME}/.agents/skills/luna-primary-engineer/scripts/self-test.sh" >/dev/null 2>&1; then
   echo "OK   Claude helper self-test"
 else
@@ -66,7 +83,7 @@ if command -v claude >/dev/null 2>&1; then
     echo "WARN Claude Code installed but auth status failed; fallback Luna review will be used in auto mode"
   fi
   HELP="$(claude --help 2>&1 || true)"
-  for flag in --print --effort --tools --disallowedTools --append-system-prompt --disable-slash-commands --no-chrome; do
+  for flag in --print --effort --tools --allowedTools --disallowedTools --append-system-prompt --disable-slash-commands --no-chrome; do
     if grep -q -- "$flag" <<<"$HELP"; then
       echo "OK   Claude Code supports $flag"
     else
@@ -79,6 +96,7 @@ if command -v claude >/dev/null 2>&1; then
   if grep -q -- '--session-id' <<<"$HELP"; then echo "OK   Claude Code supports explicit session IDs"; else echo "FAIL Claude Code lacks --session-id; sticky re-review cannot start"; FAIL=1; fi
   if grep -q -- '--resume' <<<"$HELP"; then echo "OK   Claude Code supports session resume"; else echo "FAIL Claude Code lacks --resume; sticky re-review cannot continue"; FAIL=1; fi
   if grep -q -- '--no-session-persistence' <<<"$HELP"; then echo "OK   Claude Code supports non-persistent foreground sessions"; else echo "WARN Claude Code lacks --no-session-persistence; foreground runs may leave session state"; fi
+  if grep -q -- '--allowedTools' <<<"$HELP"; then echo "OK   Claude Code exposes path-scoped permission rules"; else echo "WARN Claude Code lacks --allowedTools; helper will use framed read-only result handoff"; fi
 else
   echo "WARN Claude Code not installed; fallback Luna review will be used"
 fi

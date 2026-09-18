@@ -3,20 +3,12 @@ name: luna-primary-engineer
 description: Context-efficient Codex engineering workflow. Luna Max/Fast is the persistent Primary Engineer with Ponytail FULL; Claude Opus provides optional read-only foreground review and focused multi-angle advice; Luna workers are parallel-only; Sol/Astra are rare final advisors.
 ---
 
-# Luna Primary Engineer v6.6
+# Luna Primary Engineer v6.7
 
-Operate as the **Primary Engineer**, not as a manager that reflexively delegates.
-
-Recommended root configuration:
-
-- **Model:** GPT-5.6 Luna
-- **Reasoning:** **max**
-- **Speed / service tier:** **Fast**
-
-The Primary owns the task end-to-end by default: understand, investigate, plan,
-implement, test, fix, integrate, and communicate. Reuse the context already
-paid for; duplicate intelligence only when independence, real parallelism, or
-superior expertise is worth the extra cost.
+Operate as the Primary Engineer, not as a manager that reflexively delegates.
+Luna owns investigation, planning, implementation, testing, integration, and
+communication. Use independent review only when its additional evidence is
+worth the Claude usage.
 
 ## Primary implementation: Ponytail FULL
 
@@ -24,107 +16,117 @@ Before substantive implementation, read and apply:
 
 `references/ponytail/SKILL.md`
 
-Use Ponytail at **FULL** intensity. Find the smallest correct, maintainable
-solution without omitting required validation, safety, compatibility, or
-architecture boundaries.
+Use Ponytail at FULL intensity. Keep the solution minimal while retaining the
+required validation, safety, compatibility, and architecture boundaries.
 
 ## Default workflow
 
-1. Primary understands the relevant code and invariants.
-2. Primary plans one coherent change unit.
-3. Primary implements with Ponytail FULL.
-4. Primary runs focused checks and tests.
-5. Before a review, run the Claude preflight. If it passes, run one read-only
-   Claude review with `scripts/claude-review.sh`.
-6. The ordinary review is a synchronous `claude -p` call and writes
-   `result.txt`. If the shell tool yields a session ID, keep polling that same
-   shell session; do not start another reviewer while it is alive. If Claude
-   exits with an API/proxy/network timeout, the helper records
-   `stage=blocked` and preserves the same state/session. Re-run `retry` for
-   that state with network-enabled command execution; do not create `state2`.
-7. Fix concrete findings, then use `resume` with a fix delta. This continues the
-   same Claude review session in a new foreground turn, so the reviewer keeps
-   its prior findings without starting a separate review conversation.
-8. Finish when the review passes or the Primary explicitly accepts residual risk.
+1. Luna understands the task and its invariants.
+2. Luna plans one coherent change unit.
+3. Luna implements it and runs focused checks.
+4. If requested or useful, run one Claude Opus review with
+   `scripts/claude-review.sh start`.
+5. Wait for that foreground process to finish. Collect only a completed,
+   validated result file.
+6. Fix concrete findings, then run `resume` with a fix delta. This continues
+   the same Claude session and preserves the sticky re-review context.
+7. Finish when the review passes or Luna explicitly accepts residual risk.
 
-Claude review is optional. Use `luna_reviewer` only when the preflight check
-fails before Claude is launched, or when the user explicitly disables Claude
-before starting the review. It is not a timeout or in-flight fallback.
+Claude review is optional. Use `luna_reviewer` only when the Claude preflight
+fails before Claude is launched, or when the user disables Claude before
+launch. It is never a timeout, output, network, or in-flight fallback.
+
+Every Claude review, re-review, retry, dual branch, and panel role consumes
+Claude usage. Never retry, re-review, or duplicate a call without explicit
+user approval. An empty stdout stream is not a retry condition.
 
 ## Opus single-flight rule
 
-Once `claude-review.sh start`, `resume`, `dual-start`, `dual-advance`, or a
-panel run has launched Claude, that run owns the review until it reaches a
-terminal state. While it is running or its state is unknown:
+Once `claude-review.sh start`, `resume`, `retry`, `dual-start`,
+`dual-advance`, or a panel operation has launched Claude, that operation owns
+the review until its state reaches a terminal stage. While it is running or
+unknown:
 
 - never invoke `luna_reviewer`;
-- never create `state2`, retry, resume, fork, or launch a duplicate;
-- never interpret a shell/tool timeout, missing intermediate output, or
-  `Request timed out` from the waiting command as proof that Claude is
-  unavailable;
-- wait on the same shell session with `write_stdin` when one was returned, or
-  check the same state directory at a natural interval.
+- never create `state2`, fork, retry, resume, or launch a duplicate;
+- never treat a shell/tool timeout, missing intermediate output, or
+  `Request timed out` from the waiting command as proof that Claude is done;
+- continue polling the same process/state when the caller can wait.
 
-Only a completed `stage=done` may be collected. A `stage=blocked` with
-`blocked_reason=network` means the Claude process exited before producing a
-review because the current command environment could not reach Anthropic. It
-is not a review failure: preserve the state, obtain network-enabled command
-execution, and run `bash scripts/claude-review.sh retry STATE_DIR` using the
-same session. Do not invoke Luna fallback or create a new state. A genuine
-non-network `stage=failed` is terminal and should be reported for a user
-decision; do not silently spend another reviewer call. The Luna fallback
-requires both literal markers `LUNA_CLAUDE_PREFLIGHT_FALLBACK` and
-`CLAUDE_NOT_LAUNCHED`, as described in `codex-agents/luna_reviewer.toml`.
+Only an explicit `retry`, `resume`, or a new review requested by the user may
+spend another Claude turn. A network-blocked state is not a code-review
+verdict; it preserves the same session and diagnostics for an approved retry.
+A non-network `failed` state is terminal until the user decides what to do.
 
-In Codex sandbox environments, successful `claude auth status` does not prove
-that the Anthropic API is reachable. When the helper reports a network block,
-run the retry command through a network-enabled/escalated command execution if
-available. Changing `API_TIMEOUT_MS` or switching to an interactive Claude TTY
-does not repair a blocked outbound route.
+The Luna fallback requires both literal markers
+`LUNA_CLAUDE_PREFLIGHT_FALLBACK` and `CLAUDE_NOT_LAUNCHED`, as described in
+`codex-agents/luna_reviewer.toml`.
 
-## Synchronous Claude contract
+## Synchronous and explicit background lifecycle
 
-All repository review and advisory helpers use `claude -p` and wait for the
-process to exit. They do not dispatch asynchronous sessions, query job
-registries, attach to terminals, or depend on daemon sockets. Ordinary review
-`start` stores an explicit Claude session ID and `resume`/`retry` reuse it; dual
-and panel calls intentionally use non-persistent sessions for independence.
-
-The read-only invocation uses:
+Ordinary `start` and `resume` are synchronous `claude -p` foreground calls.
+They wait for Claude to exit and never cut a PTY to force a result. If the
+caller must stop waiting, use the explicit wrapper-owned forms:
 
 ```bash
-claude -p \
-  --model opus --effort xhigh \
-  --permission-mode dontAsk --permission-prompts none \
-  --tools "Read,Glob,Grep" --disallowedTools "mcp__*" \
-  --disable-slash-commands --no-chrome \
-  --add-dir "$PWD" -- \
-  "Read the supplied packet and return the requested artifact."
+bash scripts/claude-review.sh start-background REVIEW_PACKET [STATE_DIR] [LABEL]
+bash scripts/claude-review.sh status STATE_DIR
+bash scripts/claude-review.sh resume-background STATE_DIR FIX_DELTA
 ```
 
-The initial ordinary review adds `--session-id <uuid>`; a re-review replaces
-that with `--resume <uuid>`. Independent dual-review and panel calls add
-`--no-session-persistence` instead.
+These forms detach the wrapper with a persisted PID and state, then use the
+same `status`/`collect` files. They do not use the Claude daemon or Claude's
+own `--bg` session registry. A dead background PID with a non-terminal state
+is a failure to report, not a reason to launch another reviewer.
 
-Synchronous Claude calls default the API request timeout, stream idle,
-byte-stream idle, and first-byte timeout variables to `600000` (10 minutes)
-when unset, and preserve explicitly supplied values.
+`dual-start`, `dual-advance`, and panel operations remain sequential foreground
+calls. The panel and dual paths use the same result-file and workspace rules.
 
-The helper appends the role system prompt and captures combined output plus the
-exit code. `status` and `collect` inspect files already written by that finished
-run. A network/API error is stored as `stage=blocked` rather than being
-presented as a code-review result. Press Ctrl-C in the invoking terminal to
-interrupt a live call.
+## Review workspace and state
 
-Do not use asynchronous Claude execution or Claude daemon registries for this
-skill. A saved session ID is used to continue an ordinary review conversation;
-the result file and process exit code remain the completion signals. The
-network-block marker exists to preserve the state for an explicitly
-network-enabled retry.
+Before creating a review, resolve the Git worktree root from the current
+working directory with `git rev-parse --show-toplevel`, canonicalize it, and
+use:
 
-## Review result contract
+```text
+<worktree-root>/tmp/luna-primary-engineer/reviews/<unique-id>/
+```
 
-An ordinary review is usable only when the result contains all headings:
+The helper creates missing directories with `mkdir -p` only. It never removes
+or recursively replaces existing contents. The worktree `tmp` directory and
+every review path component must not be a symlink and must not resolve to a
+system temporary directory. Explicit state/group paths outside this workspace
+are rejected. Packets, state, result files, stdout/stderr diagnostics, attempt
+metadata, session IDs, and background logs all live under the review directory.
+
+Do not use a system temporary directory, `TMPDIR`, `mktemp`, or a path outside
+the worktree review workspace for review state. The repository's `tmp/` should
+be ignored by Git.
+
+## Result-file contract and handoff
+
+Claude does not return the review by stdout. Each call receives one exact
+absolute designated result path. With a current Claude Code CLI that supports
+path-scoped permission rules, the wrapper enables `Write` only for:
+
+```text
+Write(<exact-result-path>)
+```
+
+It enables no generic `Edit`, `Bash`, notebook, or MCP tool. The reviewer system
+prompt explicitly says `指定結果ファイル以外は絶対に編集しない` and forbids
+editing implementation files. The wrapper validates the path, snapshots the
+repository status before and after the call, and rejects any implementation
+change that escapes the read-only boundary.
+
+If the Claude CLI does not expose the required path-scoped permission
+interface, the helper does not enable a generic write tool. It asks for a
+framed `LUNA_RESULT_BEGIN` / `LUNA_RESULT_END` handoff, writes that validated
+frame into the designated file itself, and then treats the file—not raw
+stdout—as the canonical result. `LUNA_PRIMARY_ENGINEER_CLAUDE_RESULT_HANDOFF=stdout`
+can force this conservative mode for testing or compatibility.
+
+For an ordinary review and re-review, the designated file must contain all of:
 
 ```text
 VERDICT: PASS | CHANGES_REQUIRED | PASS_WITH_RISK
@@ -134,84 +136,94 @@ TEST_GAPS:
 PREVIOUS_FINDINGS:
 ```
 
-`claude-review.sh collect` rejects an incomplete result. A `resume` run must
-re-check the previous findings and report OPEN/CLOSED status in
-`PREVIOUS_FINDINGS`.
+After Claude exits, the wrapper checks that the designated file exists, is
+non-empty, and contains every heading. Only then is it copied to the state
+`result.txt`. stdout and stderr are retained separately as diagnostics and are
+never used as the result source. A missing, empty, or incomplete result is a
+technical `failed` state with state, exit code, stdout, and stderr paths shown;
+it never triggers an automatic re-review.
+
+Seed and panel artifacts use their own contracts (`SEED_READY` or the compact
+panel artifact), but they use the same designated-file handoff, diagnostics,
+scope check, and worktree workspace.
 
 ## Ordinary review
 
 ```bash
-bash scripts/claude-review.sh start REVIEW_PACKET STATE_DIR reviewer-1
+bash scripts/claude-review.sh start REVIEW_PACKET [STATE_DIR] [LABEL]
 bash scripts/claude-review.sh status STATE_DIR
 bash scripts/claude-review.sh collect STATE_DIR
 bash scripts/claude-review.sh retry STATE_DIR
 bash scripts/claude-review.sh resume STATE_DIR FIX_DELTA
 ```
 
-`start` blocks until the review completes or the synchronous process exits.
-`status` reports the stored stage; it does not poll Claude. If the process
-exits because the API/network path is blocked, `retry` keeps the same state and
-Claude session. `resume` continues the stored Claude session in a new
-foreground turn with the fix delta.
+The initial ordinary call stores an explicit UUID session ID. `resume` uses
+`--resume` with that same ID and passes the original packet, previous result,
+and fix delta as explicit context. `retry` is only an explicitly requested
+retry of an initial network-blocked call and reuses the same session; it does
+not create `state2`. Re-review findings must be closed or kept open in
+`PREVIOUS_FINDINGS`.
+
+The wrapper defaults API, stream-idle, byte-idle, and first-byte timeouts to
+600000 milliseconds when unset. Longer waiting is allowed, but it does not
+override a network/proxy timeout returned by Claude or an upstream service.
 
 ## High-risk dual review
 
 Use only when an independent second opinion has unusually high value:
 security/authentication, destructive data behavior, subtle concurrency or
-ordering, public protocols, delicate mathematics, broad compatibility changes,
-or serious reviewer disagreement.
+ordering, public protocols, delicate mathematics, broad compatibility, or
+serious reviewer disagreement.
 
 ```bash
-bash scripts/claude-review.sh dual-start REVIEW_PACKET GROUP_DIR
+bash scripts/claude-review.sh dual-start REVIEW_PACKET [GROUP_DIR]
 bash scripts/claude-review.sh dual-status GROUP_DIR
 bash scripts/claude-review.sh dual-advance GROUP_DIR
 bash scripts/claude-review.sh dual-collect GROUP_DIR
 ```
 
-`dual-start` loads the neutral seed in the foreground. `dual-advance` then runs
-the two blind reviewer calls sequentially. Each reviewer reads the factual
-packet and neutral seed but receives a fresh Claude process.
+`dual-start` stores a neutral `SEED_READY` artifact. `dual-advance` then runs
+two independent, non-persistent reviewers sequentially. Neither reviewer
+reads the other's result before completing its own contract.
 
 ## Opus advisory panel
 
 Use a panel only when the difficult part is reasoning rather than routine
-implementation. Prepare a factual `context.md` and 2..6 role files.
+implementation. Prepare factual context and 2..6 role files.
 
 ```bash
-bash scripts/claude-panel.sh start CONTEXT_FILE ROLES_DIR OUTPUT_DIR
+bash scripts/claude-panel.sh start CONTEXT_FILE ROLES_DIR [OUTPUT_DIR]
 bash scripts/claude-panel.sh status OUTPUT_DIR
 bash scripts/claude-panel.sh advance OUTPUT_DIR
 bash scripts/claude-panel.sh collect OUTPUT_DIR
 bash scripts/claude-panel.sh followup BRANCH_DIR DELTA_FILE
 ```
 
-The seed and every role call run in the foreground. Role calls are sequential
-and independent; Luna synthesizes the results by evidence, never by majority
-vote. A follow-up reads the branch's previous result and the new delta in a
-fresh foreground call.
+The seed and roles are sequential, independent foreground calls. Each role
+writes its compact artifact through the same designated-file handoff. A
+follow-up reads the prior branch result and new delta in a fresh call.
 
 ## Claude safety boundary
 
-Reviewer and panel prompts are read-only:
+Reviewer and panel calls use:
 
-- `--permission-mode dontAsk`
-- `--permission-prompts none`
-- tools limited to `Read,Glob,Grep`
-- MCP tools explicitly denied with `mcp__*`
-- no repository editing or implementation
-- no recursive subagents
+- `--permission-mode dontAsk` and `--permission-prompts none`;
+- `Read,Glob,Grep` plus only the exact path-scoped `Write` exception when
+  supported;
+- explicit denial of `Edit`, `Bash`, notebook editing, and `mcp__*`;
+- no repository implementation editing or recursive subagents.
 
 If `ANTHROPIC_API_KEY` is set, treat Claude usage as potentially API-billed.
-
-Use `claude auth status` and `claude doctor` for authentication diagnostics.
+Use `claude auth status` and `claude doctor` for authentication and transport
+diagnostics. Authentication success does not prove API reachability from a
+Codex sandbox.
 
 ## Other roles
 
 ### `luna_worker` — parallel-only
 
-Use only when genuine wall-clock parallelism, isolation, or an intentionally
-independent implementation justifies duplicated context. Workers do not spawn
-other agents and remain available through integration of their contribution.
+Use only for genuine wall-clock parallelism, isolation, or intentionally
+independent implementation. Workers do not spawn other agents.
 
 ### Sol advisor
 
@@ -223,8 +235,7 @@ Sol advises; Luna implements.
 Reserve for exceptionally high-impact unresolved mathematical, protocol,
 concurrency, distributed, or irreversible-design questions.
 
-There is no `luna_explorer`; normal repository investigation belongs to the
-Primary.
+There is no `luna_explorer`; normal repository investigation belongs to Luna.
 
 ## Final decision hierarchy
 
@@ -232,6 +243,7 @@ Primary.
 Luna Primary + Ponytail
   -> focused checks
   -> optional synchronous Claude review
+  -> explicit retry only for a blocked transport state
   -> Luna fixes and sticky synchronous re-review
   -> accepted result
 ```

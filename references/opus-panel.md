@@ -15,8 +15,10 @@ Luna creates factual context + role files
                 Luna synthesis
 ```
 
-The seed must load facts only and return `SEED_READY`. Each role is an
-independent foreground call that reads the shared context and its assigned role.
+The seed must load facts only and write `SEED_READY` to its designated result
+file. Each role is an independent foreground call that reads the shared
+context and its assigned role, then writes its compact artifact to its own
+designated result file. stdout is diagnostic only.
 Role calls run sequentially to avoid concurrent Claude instability.
 
 ## Role generation

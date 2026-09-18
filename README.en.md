@@ -85,7 +85,9 @@ In normal use, ask the Codex session, “Have Opus review this change too.” If
 
 Re-reviews continue the Opus session used for the initial review.
 
-Reviews can take several minutes. Claude API and stream timeouts default to 10 minutes. If the Codex execution environment cannot reach the Anthropic API, the workflow preserves the same review session instead of treating the transport error as a review result, and retries it from a network-enabled environment. See the [Claude integration reference](references/claude-integration.md) for details.
+Reviews can take several minutes. Claude API and stream timeouts default to 10 minutes. The wrapper validates a designated result file rather than trusting Claude's stdout; stdout and stderr are retained separately for diagnostics, so an empty stdout can still be a successful review. Review state is stored under `tmp/luna-primary-engineer/reviews/` inside the repository.
+
+Normal `start` and `resume` calls wait synchronously. If the caller must stop waiting, use the explicit `start-background` or `resume-background` form and inspect the same state with `status`. Retries and re-reviews consume Claude usage and never start automatically without an explicit decision. See the [Claude integration reference](references/claude-integration.md) for details.
 
 ## Troubleshooting
 
@@ -113,7 +115,7 @@ If `ANTHROPIC_API_KEY` is set, Claude Code may use an API-billed authentication 
 
 ### Review stops with `Request timed out`
 
-`claude auth status` can succeed even when the Codex sandbox cannot reach the Anthropic API. If the review state is `stage=blocked` with `blocked_reason=network`, retry the same state from a network-enabled command environment:
+`claude auth status` can succeed even when the Codex sandbox cannot reach the Anthropic API. If the review state is `stage=blocked` with `blocked_reason=network`, explicitly approve a retry and then retry the same state from a network-enabled command environment:
 
 ```bash
 bash scripts/claude-review.sh retry STATE_DIR

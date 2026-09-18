@@ -15,11 +15,10 @@ Usage:
   claude-panel.sh collect  OUTPUT_DIR
   claude-panel.sh followup BRANCH_DIR DELTA_FILE
 
-ROLES_DIR contains 2..6 *.md or *.txt role files.
-
-Claude is always run in the foreground with `claude -p`. start waits for the
-neutral seed, advance runs each role sequentially, and collect reads results
-already written to disk. Use Ctrl-C in the invoking terminal to interrupt.
+ROLES_DIR contains 2..6 *.md or *.txt role files. Panel state is stored below
+the current worktree's tmp/luna-primary-engineer/reviews directory. The panel
+seed and roles run sequentially in the foreground; there is no automatic retry
+or duplicate launch. Every role consumes Claude usage.
 TXT
 }
 
@@ -39,34 +38,136 @@ MODEL="${LUNA_PRIMARY_ENGINEER_CLAUDE_MODEL:-opus}"
 EFFORT="${LUNA_PRIMARY_ENGINEER_CLAUDE_PANEL_EFFORT:-max}"
 SYSTEM_PROMPT="$ROOT_DIR/references/claude/panel-system.md"
 SYSTEM_PROMPT_TEXT="$(cat "$SYSTEM_PROMPT")"
-base_args=(
-  --print
-  --model "$MODEL"
-  --effort "$EFFORT"
-  --permission-mode dontAsk
-  --permission-prompts none
-  --tools "Read,Glob,Grep"
-  --disallowedTools "mcp__*"
-  --append-system-prompt "$SYSTEM_PROMPT_TEXT"
-  --disable-slash-commands
-  --no-chrome
-  --no-session-persistence
-)
+HANDOFF_MODE=""
+
+build_base_args() {
+  local result_file="$1" handoff_mode="$2" tools="Read,Glob,Grep"
+  if [[ "$handoff_mode" == file ]]; then tools="$tools,Write"; fi
+  BASE_ARGS=(
+    --print --model "$MODEL" --effort "$EFFORT"
+    --permission-mode dontAsk --permission-prompts none --tools "$tools"
+  )
+  if [[ "$handoff_mode" == file ]]; then
+    BASE_ARGS+=(--allowedTools "Write($result_file)" --disallowedTools Edit MultiEdit NotebookEdit Bash "mcp__*")
+  else
+    BASE_ARGS+=(--disallowedTools Write Edit MultiEdit NotebookEdit Bash "mcp__*")
+  fi
+  BASE_ARGS+=(--append-system-prompt "$SYSTEM_PROMPT_TEXT" --disable-slash-commands --no-chrome --no-session-persistence)
+}
+
+result_instruction() {
+  local result_file="$1" handoff_mode="$2"
+  if [[ "$handoff_mode" == file ]]; then
+    cat <<EOF
+Write the complete panel artifact to this exact absolute path: $result_file
+This is the only file you may write. Do not edit the context, role files,
+source/, tests/, docs/, configuration, state metadata, or any other path.
+stdout may be empty; the wrapper validates the designated file after exit.
+EOF
+  else
+    cat <<'EOF'
+The available tools are read-only. Do not create or edit files. Emit the
+complete artifact between the exact lines LUNA_RESULT_BEGIN and
+LUNA_RESULT_END; the wrapper will adopt that framed handoff into the result
+file. Ordinary stdout is not a result.
+EOF
+  fi
+}
 
 run_foreground() {
-  local output="$1" exit_file="$2" add_dir="$3" prompt="$4"
-  shift 4
-  mkdir -p "$(dirname "$output")"
-  luna_primary_engineer_run_foreground "$output" "$exit_file" "${base_args[@]}" --add-dir "$add_dir" "$@" -- "$prompt"
+  local result_file="$1" stdout_file="$2" stderr_file="$3" exit_file="$4"
+  local add_dir="$5" prompt="$6"
+  shift 6
+  build_base_args "$result_file" "$HANDOFF_MODE"
+  prompt="$prompt
+
+$(result_instruction "$result_file" "$HANDOFF_MODE")"
+  mkdir -p "$(dirname "$result_file")" "$(dirname "$stdout_file")" "$(dirname "$stderr_file")" "$(dirname "$exit_file")"
+  luna_primary_engineer_run_foreground \
+    "$result_file" "$stdout_file" "$stderr_file" "$exit_file" "$HANDOFF_MODE" \
+    "${BASE_ARGS[@]}" "$@" --add-dir "$add_dir" -- "$prompt"
+}
+
+next_child_dir() {
+  local parent="$1" prefix="$2" n=1 candidate
+  while :; do
+    candidate="$parent/$prefix-$n"
+    if [[ ! -e "$candidate" ]]; then
+      (umask 077 && mkdir "$candidate")
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+    n=$((n + 1))
+  done
+}
+
+run_artifact() {
+  local state_dir="$1" prompt="$2" add_dir="$3" kind="$4" review_cwd="$5" rc=0
+  local attempt_dir result_file stdout_file stderr_file exit_file before after
+  shift 5
+  attempt_dir="$(next_child_dir "$state_dir" attempt)"
+  result_file="$attempt_dir/reviewer-result.md"
+  stdout_file="$attempt_dir/stdout.txt"
+  stderr_file="$attempt_dir/stderr.txt"
+  exit_file="$attempt_dir/exit_code"
+  printf '%s\n' "$attempt_dir" > "$state_dir/last_attempt"
+  printf 'running\n' > "$state_dir/stage"
+  rm -f "$state_dir/blocked_reason"
+  before="$attempt_dir/repository-before.txt"
+  after="$attempt_dir/repository-after.txt"
+  luna_primary_engineer_capture_repo_scope "$review_cwd" "$before"
+  if run_foreground "$result_file" "$stdout_file" "$stderr_file" "$exit_file" "$add_dir" "$prompt" "$@"; then rc=0; else rc=$?; fi
+  if [[ "$HANDOFF_MODE" == stdout && ! -s "$result_file" ]]; then
+    luna_primary_engineer_materialize_stdout_result "$stdout_file" "$result_file" || true
+  fi
+  luna_primary_engineer_capture_repo_scope "$review_cwd" "$after"
+  cp -- "$exit_file" "$state_dir/run_exit_code"
+  if ! cmp -s "$before" "$after"; then
+    printf 'failed\n' > "$state_dir/stage"
+    luna_primary_engineer_report_technical_failure "$state_dir" "$attempt_dir" "$result_file" "$stdout_file" "$stderr_file" "$exit_file" "reviewer write escaped the read-only implementation boundary"
+    return 19
+  fi
+  if (( rc != 0 )); then
+    if luna_primary_engineer_review_network_failure "$stdout_file" "$stderr_file"; then
+      printf 'blocked\n' > "$state_dir/stage"
+      printf 'network\n' > "$state_dir/blocked_reason"
+      luna_primary_engineer_report_technical_failure "$state_dir" "$attempt_dir" "$result_file" "$stdout_file" "$stderr_file" "$exit_file" "Claude transport/API failure"
+      return 11
+    fi
+    printf 'failed\n' > "$state_dir/stage"
+    luna_primary_engineer_report_technical_failure "$state_dir" "$attempt_dir" "$result_file" "$stdout_file" "$stderr_file" "$exit_file" "Claude exited non-zero"
+    return "$rc"
+  fi
+  case "$kind" in
+    seed)
+      if ! grep -Fqx 'SEED_READY' "$result_file"; then
+        printf 'failed\n' > "$state_dir/stage"
+        luna_primary_engineer_report_technical_failure "$state_dir" "$attempt_dir" "$result_file" "$stdout_file" "$stderr_file" "$exit_file" "seed artifact is not exactly SEED_READY"
+        return 18
+      fi
+      ;;
+    artifact)
+      if [[ ! -s "$result_file" ]]; then
+        printf 'failed\n' > "$state_dir/stage"
+        luna_primary_engineer_report_technical_failure "$state_dir" "$attempt_dir" "$result_file" "$stdout_file" "$stderr_file" "$exit_file" "panel artifact is empty"
+        return 18
+      fi
+      ;;
+    *) echo "ERROR: unknown panel artifact kind: $kind" >&2; return 2 ;;
+  esac
+  luna_primary_engineer_adopt_result "$result_file" "$state_dir/result.txt" || {
+    printf 'failed\n' > "$state_dir/stage"
+    luna_primary_engineer_report_technical_failure "$state_dir" "$attempt_dir" "$result_file" "$stdout_file" "$stderr_file" "$exit_file" "designated result could not be adopted"
+    return 18
+  }
+  printf 'done\n' > "$state_dir/stage"
 }
 
 case "$MODE" in
   start)
     require_claude
     [[ $# -ge 2 && $# -le 3 ]] || { usage >&2; exit 2; }
-    CONTEXT="$1"
-    ROLES_DIR="$2"
-    OUTPUT="${3:-$(luna_primary_engineer_runtime_dir)-panel}"
+    CONTEXT="$1"; ROLES_DIR="$2"
     [[ -f "$CONTEXT" ]] || { echo "ERROR: context not found: $CONTEXT" >&2; exit 2; }
     [[ -d "$ROLES_DIR" ]] || { echo "ERROR: roles directory not found: $ROLES_DIR" >&2; exit 2; }
     shopt -s nullglob
@@ -74,171 +175,109 @@ case "$MODE" in
     COUNT=${#ROLES[@]}
     (( COUNT >= 2 )) || { echo "ERROR: panel requires at least 2 role files; got $COUNT" >&2; exit 2; }
     (( COUNT <= 6 )) || { echo "ERROR: panel hard limit is 6 role files; got $COUNT" >&2; exit 2; }
+    OUTPUT="$(luna_primary_engineer_prepare_review_dir "${3:-}")" || exit $?
     luna_primary_engineer_require_fresh_state_tree "$OUTPUT" || exit $?
-
-    mkdir -p "$OUTPUT/seed" "$OUTPUT/roles"
-    cp "$CONTEXT" "$OUTPUT/context.md"
-    CONTEXT_ABS="$(cd "$OUTPUT" && pwd)/context.md"
-    printf '%s\n' "$PWD" > "$OUTPUT/cwd"
+    HANDOFF_MODE="$(luna_primary_engineer_result_handoff_mode)" || exit $?
+    (umask 077 && mkdir "$OUTPUT/seed" "$OUTPUT/roles")
+    cp -- "$CONTEXT" "$OUTPUT/context.md"
+    CONTEXT_ABS="$(cd "$OUTPUT" && pwd -P)/context.md"
+    printf '%s\n' "$(pwd -P)" > "$OUTPUT/cwd"
     printf 'panel\n' > "$OUTPUT/kind"
+    printf '%s\n' "$HANDOFF_MODE" > "$OUTPUT/handoff_mode"
     printf 'seed_running\n' > "$OUTPUT/stage"
     : > "$OUTPUT/role-names.txt"
     for role in "${ROLES[@]}"; do
-      base="$(basename "$role")"
-      stem="${base%.*}"
-      cp "$role" "$OUTPUT/roles/$stem.md"
+      base="$(basename "$role")"; stem="${base%.*}"
+      cp -- "$role" "$OUTPUT/roles/$stem.md"
       printf '%s\n' "$stem" >> "$OUTPUT/role-names.txt"
-      mkdir -p "$OUTPUT/$stem"
+      mkdir "$OUTPUT/$stem"
       printf '%s\n' "$OUTPUT" > "$OUTPUT/$stem/panel_root"
     done
     printf 'running\n' > "$OUTPUT/seed/stage"
-    if run_foreground "$OUTPUT/seed/result.txt" "$OUTPUT/seed/run_exit_code" "$OUTPUT" \
-      "LUNA_PRIMARY_ENGINEER_SHARED_SEED_MODE. This is a foreground factual-context load. Read the shared context at: $CONTEXT_ABS . Load it into the conversation. Do not diagnose, rank hypotheses, recommend a design, or propose a fix. Do not ask questions. Reply exactly SEED_READY when loaded."; then
+    if run_artifact "$OUTPUT/seed" \
+      "LUNA_PRIMARY_ENGINEER_SHARED_SEED_MODE. This is a foreground factual-context load. Read the shared context at: $CONTEXT_ABS . Do not diagnose or propose a fix. Write exactly SEED_READY to the designated result file." \
+      "$OUTPUT" seed "$(pwd -P)"; then
       :
     else
-      printf 'failed\n' > "$OUTPUT/seed/stage"
+      seed_rc=$?
       printf 'failed\n' > "$OUTPUT/stage"
-      cat "$OUTPUT/seed/result.txt" >&2 || true
-      exit "$(cat "$OUTPUT/seed/run_exit_code")"
+      exit "$seed_rc"
     fi
-    if ! grep -Fq 'SEED_READY' "$OUTPUT/seed/result.txt"; then
-      printf 'failed\n' > "$OUTPUT/seed/stage"
-      printf 'failed\n' > "$OUTPUT/stage"
-      echo "ERROR: foreground seed did not return SEED_READY." >&2
-      cat "$OUTPUT/seed/result.txt" >&2 || true
-      exit 18
-    fi
-    printf 'done\n' > "$OUTPUT/seed/stage"
     printf 'seed_done\n' > "$OUTPUT/stage"
-    echo "SEED_READY"
-    echo "OUTPUT_DIR=$OUTPUT"
-    echo "NEXT=run claude-panel.sh advance $OUTPUT"
+    echo "SEED_READY"; echo "OUTPUT_DIR=$OUTPUT"; echo "NEXT=run claude-panel.sh advance $OUTPUT"
     ;;
 
   status)
     [[ $# -eq 1 ]] || { usage >&2; exit 2; }
-    OUTPUT="$1"
-    [[ -d "$OUTPUT" ]] || { echo "ERROR: invalid panel directory: $OUTPUT" >&2; exit 2; }
+    OUTPUT="$(luna_primary_engineer_resolve_existing_review_dir "$1")" || exit $?
     echo "STAGE=$(cat "$OUTPUT/stage" 2>/dev/null || echo unknown)"
-    echo "[seed]"
-    luna_primary_engineer_print_state_dir "$OUTPUT/seed" || true
+    echo "[seed]"; luna_primary_engineer_print_state_dir "$OUTPUT/seed" || true
     while IFS= read -r stem; do
       [[ -n "$stem" ]] || continue
-      if [[ -d "$OUTPUT/$stem" ]]; then
-        echo "[$stem]"
-        luna_primary_engineer_print_state_dir "$OUTPUT/$stem" || true
-      fi
+      if [[ -d "$OUTPUT/$stem" ]]; then echo "[$stem]"; luna_primary_engineer_print_state_dir "$OUTPUT/$stem" || true; fi
     done < "$OUTPUT/role-names.txt"
     ;;
 
   advance)
     require_claude
     [[ $# -eq 1 ]] || { usage >&2; exit 2; }
-    OUTPUT="$1"
-    [[ -f "$OUTPUT/seed/result.txt" && "$(cat "$OUTPUT/stage" 2>/dev/null || true)" == "seed_done" ]] || {
-      echo "ERROR: foreground seed is not complete: $OUTPUT" >&2
-      exit 10
-    }
-    HAS_ANY=0
-    MISSING=0
-    while IFS= read -r stem; do
-      [[ -n "$stem" ]] || continue
-      if [[ -f "$OUTPUT/$stem/result.txt" ]]; then HAS_ANY=1; else MISSING=1; fi
-    done < "$OUTPUT/role-names.txt"
+    OUTPUT="$(luna_primary_engineer_resolve_existing_review_dir "$1")" || exit $?
+    [[ -f "$OUTPUT/seed/result.txt" && "$(cat "$OUTPUT/stage" 2>/dev/null || true)" == seed_done ]] || { echo "ERROR: foreground seed is not complete: $OUTPUT" >&2; exit 10; }
+    HAS_ANY=0; MISSING=0
+    while IFS= read -r stem; do [[ -n "$stem" ]] || continue; if [[ -f "$OUTPUT/$stem/result.txt" ]]; then HAS_ANY=1; else MISSING=1; fi; done < "$OUTPUT/role-names.txt"
     if (( HAS_ANY == 1 )); then
-      if (( MISSING == 1 )); then
-        echo "ERROR: panel is partially complete; inspect results before rerunning." >&2
-        exit 15
-      fi
-      echo "INFO: all panel roles already ran; no action taken."
-      exit 0
+      (( MISSING == 0 )) || { echo "ERROR: panel is partially complete; inspect results before rerunning." >&2; exit 15; }
+      echo "INFO: all panel roles already ran; no action taken."; exit 0
     fi
-
-    CONTEXT_ABS="$(cd "$OUTPUT" && pwd)/context.md"
-    SEED_ABS="$(cd "$OUTPUT/seed" && pwd)/result.txt"
-    FAIL=0
+    CONTEXT_ABS="$(cd "$OUTPUT" && pwd -P)/context.md"; SEED_ABS="$OUTPUT/seed/result.txt"; HANDOFF_MODE="$(cat "$OUTPUT/handoff_mode")"; FAIL=0
+    printf 'branches_running\n' > "$OUTPUT/stage"
     while IFS= read -r stem; do
       [[ -n "$stem" ]] || continue
-      D="$OUTPUT/$stem"
-      ROLE_ABS="$(cd "$OUTPUT" && pwd)/roles/$stem.md"
-      printf 'running\n' > "$D/stage"
-      if run_foreground "$D/result.txt" "$D/run_exit_code" "$OUTPUT" \
-        "You are an independent foreground panel expert. Read the shared context at: $CONTEXT_ABS , the neutral seed result at: $SEED_ABS , and your assigned role at: $ROLE_ABS . Analyze strictly from that role. Do not seek consensus with hypothetical peers. Do not ask questions; state uncertainty and finish. Return the compact panel artifact from your system instructions."; then
-        if [[ -s "$D/result.txt" ]]; then
-          printf 'done\n' > "$D/stage"
-          cp "$D/result.txt" "$D/initial-result.txt"
-        else
-          printf 'failed\n' > "$D/stage"
-          echo "ERROR: panel role $stem returned an empty result." >&2
-          FAIL=18
-        fi
+      D="$OUTPUT/$stem"; ROLE_ABS="$(cd "$OUTPUT" && pwd -P)/roles/$stem.md"
+      if run_artifact "$D" \
+        "You are an independent foreground panel expert. Read the shared context at: $CONTEXT_ABS , the neutral seed result at: $SEED_ABS , and your assigned role at: $ROLE_ABS . Analyze strictly from that role. Do not seek consensus or edit files; finish with the compact panel artifact from your system instructions." \
+        "$OUTPUT" artifact "$(cat "$OUTPUT/cwd")"; then
+        cp -- "$D/result.txt" "$D/initial-result.txt"
       else
-        printf 'failed\n' > "$D/stage"
-        echo "ERROR: panel role $stem foreground Claude call failed." >&2
-        FAIL="$(cat "$D/run_exit_code")"
+        code=$?; (( FAIL == 0 )) && FAIL="$code"
       fi
     done < "$OUTPUT/role-names.txt"
-    if (( FAIL != 0 )); then
-      printf 'failed\n' > "$OUTPUT/stage"
-      exit "$FAIL"
-    fi
-    printf 'done\n' > "$OUTPUT/stage"
-    "$0" collect "$OUTPUT"
+    if (( FAIL != 0 )); then printf 'failed\n' > "$OUTPUT/stage"; exit "$FAIL"; fi
+    printf 'done\n' > "$OUTPUT/stage"; "$0" collect "$OUTPUT"
     ;;
 
   collect)
     [[ $# -eq 1 ]] || { usage >&2; exit 2; }
-    OUTPUT="$1"
+    OUTPUT="$(luna_primary_engineer_resolve_existing_review_dir "$1")" || exit $?
     [[ -f "$OUTPUT/role-names.txt" ]] || { echo "ERROR: invalid panel directory: $OUTPUT" >&2; exit 2; }
     printf 'role\tstate\tresult\n' > "$OUTPUT/manifest.tsv"
     while IFS= read -r stem; do
       [[ -n "$stem" ]] || continue
       D="$OUTPUT/$stem"
-      [[ "$(cat "$D/stage" 2>/dev/null || true)" == "done" && -f "$D/result.txt" ]] || {
-        echo "ERROR: panel role $stem is not complete." >&2
-        exit 10
-      }
+      [[ "$(cat "$D/stage" 2>/dev/null || true)" == done && -f "$D/result.txt" ]] || { echo "ERROR: panel role $stem is not complete." >&2; exit 10; }
       printf '%s\tdone\t%s\n' "$stem" "$D/result.txt" >> "$OUTPUT/manifest.tsv"
     done < "$OUTPUT/role-names.txt"
     cat "$OUTPUT/manifest.tsv"
-    while IFS= read -r stem; do
-      [[ -n "$stem" ]] || continue
-      echo "--- $stem ---"
-      cat "$OUTPUT/$stem/result.txt"
-    done < "$OUTPUT/role-names.txt"
+    while IFS= read -r stem; do [[ -n "$stem" ]] || continue; echo "--- $stem ---"; cat "$OUTPUT/$stem/result.txt"; done < "$OUTPUT/role-names.txt"
     ;;
 
   followup)
     require_claude
     [[ $# -eq 2 ]] || { usage >&2; exit 2; }
-    BRANCH="$1"
+    BRANCH="$(luna_primary_engineer_validate_review_descendant_dir "$(cat "$1/panel_root" 2>/dev/null || dirname "$1")" "$1")" || exit $?
     DELTA="$2"
-    [[ -f "$BRANCH/result.txt" && "$(cat "$BRANCH/stage" 2>/dev/null || true)" == "done" ]] || {
-      echo "ERROR: completed foreground branch not found: $BRANCH" >&2
-      exit 10
-    }
+    [[ -f "$BRANCH/result.txt" && "$(cat "$BRANCH/stage" 2>/dev/null || true)" == done ]] || { echo "ERROR: completed foreground branch not found: $BRANCH" >&2; exit 10; }
     [[ -f "$DELTA" ]] || { echo "ERROR: delta not found: $DELTA" >&2; exit 2; }
-    ROOT="$(cat "$BRANCH/panel_root" 2>/dev/null || dirname "$BRANCH")"
-    N=1
-    while [[ -e "$BRANCH/followup-$N" ]]; do N=$((N + 1)); done
-    ROUND="$BRANCH/followup-$N"
-    mkdir -p "$ROUND"
-    cp "$DELTA" "$ROUND/followup.md"
-    cp "$BRANCH/result.txt" "$ROUND/previous-result.txt"
-    printf '%s\n' "$ROOT" > "$ROUND/panel_root"
-    CHILD_ABS="$(cd "$ROUND" && pwd)"
-    if run_foreground "$ROUND/result.txt" "$ROUND/run_exit_code" "$ROOT" \
-      "Continue this panel expert's work in a fresh foreground turn. Read the previous result at: $CHILD_ABS/previous-result.txt and the new delta/question at: $CHILD_ABS/followup.md . Stay within the same decision domain, answer only the new unresolved point, do not ask questions, and finish with the compact panel artifact from your system instructions."; then
-      cp "$ROUND/result.txt" "$BRANCH/result.txt"
-      cp "$ROUND/run_exit_code" "$BRANCH/run_exit_code"
-      printf 'done\n' > "$ROUND/stage"
-      printf 'done\n' > "$BRANCH/stage"
-      cat "$BRANCH/result.txt"
+    PANEL_ROOT="$(cat "$BRANCH/panel_root")"; HANDOFF_MODE="$(cat "$PANEL_ROOT/handoff_mode")"
+    ROUND="$(next_child_dir "$BRANCH" followup)"
+    cp -- "$DELTA" "$ROUND/followup.md"; cp -- "$BRANCH/result.txt" "$ROUND/previous-result.txt"; printf '%s\n' "$PANEL_ROOT" > "$ROUND/panel_root"
+    CHILD_ABS="$(cd "$ROUND" && pwd -P)"
+    if run_artifact "$ROUND" \
+      "Continue this panel expert's work in a fresh foreground turn. Read the previous result at: $CHILD_ABS/previous-result.txt and the new delta/question at: $CHILD_ABS/followup.md . Stay within the same decision domain, do not ask questions or edit files, and finish with the compact panel artifact from your system instructions." \
+      "$PANEL_ROOT" artifact "$(cat "$PANEL_ROOT/cwd")"; then
+      cp -- "$ROUND/result.txt" "$BRANCH/result.txt"; cp -- "$ROUND/run_exit_code" "$BRANCH/run_exit_code"; printf 'done\n' > "$BRANCH/stage"; cat "$BRANCH/result.txt"
     else
-      printf 'failed\n' > "$ROUND/stage"
-      printf 'failed\n' > "$BRANCH/stage"
-      cat "$ROUND/result.txt" >&2 || true
-      exit "$(cat "$ROUND/run_exit_code")"
+      code=$?; printf 'failed\n' > "$ROUND/stage"; printf 'failed\n' > "$BRANCH/stage"; exit "$code"
     fi
     ;;
 

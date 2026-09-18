@@ -1,74 +1,61 @@
-# Claude Code integration — synchronous mode
+# Claude Code integration
 
-Claude is optional. When available, Opus provides independent read-only review
-and focused reasoning without becoming the implementation owner.
+Claude is optional. When enabled, Opus is an independent read-only reviewer;
+Luna remains the implementation owner.
 
 ## Execution model
 
-Every helper invokes Claude with `-p/--print` and waits for the process to
-exit. The result is combined stdout/stderr captured in a state directory, and
-the exit code is stored beside it. Ordinary review `start` creates a persistent
-session with an explicit ID; `resume` continues that session. Dual-review and
-panel calls use fresh non-persistent sessions.
+Ordinary `start` and `resume` invoke `claude -p` synchronously and wait for
+the process to exit. If the caller must stop waiting, use the explicit
+wrapper-owned `start-background` or `resume-background` form and inspect the
+same state with `status`. These forms do not cut a foreground PTY and do not
+use the Claude daemon or its session registry.
 
-The common read-only options are:
+The initial ordinary review stores a persistent session UUID. `resume` uses
+that UUID with `--resume`; dual reviewers and panel calls use fresh,
+non-persistent Claude sessions. Every call consumes Claude usage. No timeout,
+empty stdout, missing intermediate output, or transport error automatically
+starts another call.
+
+## Read-only boundary and result handoff
+
+The common options are:
 
 ```text
 --permission-mode dontAsk
 --permission-prompts none
---tools Read,Glob,Grep
---disallowedTools mcp__*
+--tools Read,Glob,Grep,Write     # Write only in path-scoped mode
+--allowedTools Write(<exact-result-file>)
+--disallowedTools Edit MultiEdit NotebookEdit Bash mcp__*
 --disable-slash-commands
 --no-chrome
 ```
 
-Ordinary review calls add `--session-id <uuid>` on the initial turn and
-`--resume <uuid>` on re-review turns. Independent dual-review and panel calls
-add `--no-session-persistence`.
+The reviewer system prompt gives one explicit exception: it may write the
+exact absolute designated result file and must never edit anything else. The
+wrapper also snapshots Git status before and after the call, so an escaped
+implementation edit fails the review.
 
-Synchronous calls default `API_TIMEOUT_MS`, the stream idle, byte-stream idle,
-and first-byte timeouts to `600000` (10 minutes) when the corresponding Claude
-variables are unset. This allows extended Opus thinking pauses and slow API
-requests to finish instead of being cut off by a shorter local default; set
-the variables explicitly to choose other positive millisecond values.
+If the installed Claude CLI does not expose the path-scoped permission
+interface, the helper does not enable generic Write/Edit/Bash. It asks Claude
+for a `LUNA_RESULT_BEGIN` / `LUNA_RESULT_END` framed handoff, writes that
+validated frame into the designated result file, and still treats the file as
+the canonical result. Set
+`LUNA_PRIMARY_ENGINEER_CLAUDE_RESULT_HANDOFF=stdout` to force that mode.
 
-The helper reads the role system prompt and passes it through
-`--append-system-prompt`. `--add-dir` grants read access to the packet/state
-directory. Reviewers do not edit files, implement fixes, use MCP tools, or
-spawn subagents.
+The wrapper keeps these files for each attempt:
 
-Do not use `--bare`; it can bypass normal authentication sources. Keep the
-prompt bounded enough for one foreground invocation to finish.
-
-## Authentication
-
-```bash
-export LUNA_PRIMARY_ENGINEER_CLAUDE=auto
-claude auth status
-claude doctor
+```text
+reviewer-result.md  # designated file Claude writes, or wrapper materializes
+stdout.txt          # diagnostic only
+stderr.txt          # diagnostic only
+exit_code
+repository-before.txt
+repository-after.txt
 ```
 
-- `auto`: require `claude auth status` to succeed.
-- `on`: skip the authentication precheck and attempt Claude.
-- `off`: use the Luna reviewer fallback before launching Claude; it is not a
-  fallback for a review that has already started.
-
-`ANTHROPIC_API_KEY` may indicate API-billed authentication and is reported by
-the helpers.
-
-## Result handling
-
-`start`, `resume`, `dual-start`, and `dual-advance` wait for Claude and write
-their result files before returning. If the shell tool yields a session ID,
-poll that same session until it exits. A shell/tool timeout while the process is
-still alive does not authorize a duplicate or Luna fallback. When Claude exits
-with `Request timed out` or an Anthropic API/proxy error, the ordinary helper
-stores `stage=blocked` and `blocked_reason=network`; it does not turn that
-transport failure into a review result. Run `claude-review.sh retry STATE_DIR`
-with network-enabled command execution to retry the same session. `status`
-only reads the state directory; `collect` validates and prints stored output.
-
-An ordinary review is accepted only when all headings are present:
+Only a non-empty designated file that passes the artifact contract is adopted
+as the state `result.txt`. For an ordinary review the contract is:
 
 ```text
 VERDICT: PASS | CHANGES_REQUIRED | PASS_WITH_RISK
@@ -78,9 +65,46 @@ TEST_GAPS:
 PREVIOUS_FINDINGS:
 ```
 
-Ordinary `retry` and re-review use the stored Claude session ID and continue the
-same conversation. Panel follow-up remains a fresh foreground call and passes
-the prior result and new question as explicit context. An interactive Claude
-TTY does not bypass the command environment's network policy, and this
-workflow deliberately avoids the Claude background daemon because it is not a
-reliable lifecycle dependency here.
+An absent, empty, or incomplete result is a technical `failed` state. The
+error includes the state, exit code, and stdout/stderr diagnostic paths. Raw
+stdout is never promoted to `result.txt`, and the wrapper never retries only
+because stdout is empty.
+
+## Authentication and network
+
+```bash
+export LUNA_PRIMARY_ENGINEER_CLAUDE=auto
+claude auth status
+claude doctor
+```
+
+- `auto`: require `claude auth status` to succeed.
+- `on`: skip the authentication precheck and attempt Claude.
+- `off`: use the preflight-only Luna fallback before Claude is launched.
+
+Authentication success does not prove that the current Codex command
+environment can reach the Anthropic API. A recognizable transport failure is
+stored as `stage=blocked` with `blocked_reason=network`; the session and
+diagnostics remain available for an explicitly approved `retry` on the same
+state. A non-network failure or an invalid result is terminal until the user
+chooses a next step.
+
+`ANTHROPIC_API_KEY` may indicate API-billed authentication and is reported by
+the helpers. The API, stream-idle, byte-idle, and first-byte timeout defaults
+are 600000 milliseconds when unset, but an upstream network timeout can still
+arrive earlier.
+
+## Workspace
+
+The helper resolves the Git worktree root from the current working directory
+and stores every packet, state, result, diagnostic, session metadata, and
+background log under:
+
+```text
+<worktree-root>/tmp/luna-primary-engineer/reviews/<unique-id>/
+```
+
+The worktree `tmp` path and its review components must not be symlinks or
+resolve to a system temporary directory. Existing contents are never
+recursively removed or replaced. State/group arguments outside this workspace
+are rejected.

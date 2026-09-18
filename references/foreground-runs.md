@@ -1,82 +1,82 @@
-# Claude synchronous run lifecycle
-
-The helpers use one synchronous Claude call per operation. The invoking shell
-owns the lifetime, so completion is determined by the process exit code and the
-files it writes.
+# Claude review lifecycle
 
 ## State machine
 
 ```text
-running
-  -> done       result.txt exists and exit code is 0
-  -> blocked    Claude exits with a network/API or proxy error
-  -> failed     Claude exits for another reason or output is invalid
+queued/running
+  -> done       designated result exists and passes its contract
+  -> blocked    Claude exits with a recognizable network/API error
+  -> failed     Claude exits otherwise, writes an invalid result, or escapes the boundary
 ```
 
-`status` reads `stage` and `run_exit_code`; it never polls another process.
-`collect` is valid only for `stage=done`.
+`status` reads the stored state and background PID; it never starts a retry.
+`collect` is valid only for `stage=done` and validates the adopted
+`result.txt` again.
 
-`blocked` is not a review verdict. It means the synchronous Claude process
-could not reach Anthropic from the current command environment. The state keeps
-the original `session_id` and can be retried after network access is restored.
+## Workspace and state
 
-## State directory
+Every operation uses a unique directory below
+`<worktree-root>/tmp/luna-primary-engineer/reviews/`. A fresh state directory
+must be empty. The helper creates directories but never recursively deletes or
+overwrites existing review data.
 
-Ordinary review state contains:
+An ordinary state contains:
 
 ```text
 review-packet.md
 packet_path
 session_id
+handoff_mode
 stage
 run_exit_code
-result.txt
+result.txt                 # canonical adopted result
+attempt-N/
+  reviewer-result.md       # designated handoff file
+  stdout.txt               # diagnostic only
+  stderr.txt               # diagnostic only
+  exit_code
+  repository-before.txt
+  repository-after.txt
 rereview-N/
 network-retry-N/
 ```
 
-Dual-review and panel branches additionally archive their first result as
-`initial-result.txt`.
-
-Panel and dual-review state use the same files under `seed/` and one directory
-per role. A result directory is single-use for its initial run. Ordinary
-re-review uses the stored `session_id` and the same Claude conversation;
-panel follow-up remains a fresh call with explicit prior-result context.
+Dual and panel branches use the same attempt layout. Seeds and panel roles
+have their own artifact contract, but the result-file and safety rules are the
+same.
 
 ## Interruption and failure
 
-Press Ctrl-C in the terminal running Claude. An interrupted initial call leaves
-its partial output and non-zero or absent exit marker; inspect the state before
-trying again. A network-blocked initial call is recorded as `stage=blocked`; run
-`retry` on that same state with network-enabled command execution. A network-
-blocked re-review keeps its current round blocked; rerun `resume` with the same
-fix delta. A non-network failed ordinary re-review marks both the round and
-its parent state as failed, so `collect` cannot return the previous successful
-result; rerun `resume` to retry the failed round in the stored session. Do not
-treat a partial result as a review verdict.
+Foreground `start` and `resume` wait for Claude. If the caller needs to stop
+waiting, use `start-background` or `resume-background`; those commands detach
+the wrapper while retaining the state and a PID for `status`. Do not cut a PTY
+and then launch another reviewer.
 
-If the Claude preflight fails before launch, or the user disabled Claude before
-launch, use the Luna reviewer fallback with its explicit preflight markers.
-Once Claude has launched, never invoke the fallback, retry, or create a second
-state while the run is pending. A shell/tool timeout or missing intermediate
-output is not evidence that a launched review is unavailable. If the process
-has exited and the helper records `blocked_reason=network`, retry the same
-state/session with network-enabled command execution. Do not use the fallback.
-If the launched call reaches terminal non-network `failed`, report it and wait
-for a user decision.
+An empty stdout stream is harmless when the designated file is complete. A
+missing, empty, or incomplete designated file is a technical failure and its
+stdout/stderr diagnostics are reported. It is never an automatic retry
+condition. A network-blocked state is retried only by an explicit user-approved
+`retry` or `resume` using the same ordinary session.
+
+If Claude preflight fails before launch, or the user disabled Claude before
+launch, use the Luna fallback with its explicit markers. Once Claude has
+launched, never use the fallback, create a second state, or duplicate the
+review.
 
 ## Commands
 
 ```bash
-claude-review.sh start packet.md state reviewer-1
+claude-review.sh start packet.md [state] [label]
+claude-review.sh start-background packet.md [state] [label]
 claude-review.sh status state
 claude-review.sh collect state
 claude-review.sh retry state
 claude-review.sh resume state fix-delta.md
+claude-review.sh resume-background state fix-delta.md
 
-claude-panel.sh start context.md roles panel
-claude-panel.sh status panel
-claude-panel.sh advance panel
-claude-panel.sh collect panel
-claude-panel.sh followup panel/analyst delta.md
+claude-panel.sh start context.md roles [output]
+claude-panel.sh status output
+claude-panel.sh advance output
+claude-panel.sh collect output
+claude-panel.sh followup output/role delta.md
 ```
