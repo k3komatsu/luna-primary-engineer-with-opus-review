@@ -73,7 +73,36 @@ claude() {
     "byte-idle-timeout=${CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS:-unset}" \
     "first-byte-timeout=${CLAUDE_STREAM_FIRST_BYTE_TIMEOUT_MS:-unset}" \
     "$@" >> "$MOCK_LOG"
+  if [[ "${MOCK_STRICT_CLI:-0}" == 1 ]]; then
+    local arg
+    for arg in "$@"; do
+      case "$arg" in
+        MultiEdit|NotebookEdit)
+          printf '%s\n' "Permission deny rule \"$arg\" matches no known tool" >&2
+          return 2
+          ;;
+        Write\(/*)
+          printf '%s\n' "Permission allow rule $arg is not matched; use Edit(path)" >&2
+          return 2
+          ;;
+      esac
+    done
+    if [[ "$LUNA_PRIMARY_ENGINEER_CLAUDE_RESULT_HANDOFF" != stdout ]] && \
+      ! printf '%s\n' "$@" | grep -Eq '^Edit\(/'; then
+      printf '%s\n' 'Permission allow rule is missing Edit(path)' >&2
+      return 2
+    fi
+  fi
   if [[ "${MOCK_FAIL:-0}" == 1 ]]; then return 7; fi
+  if [[ "${MOCK_PERMISSION_FAIL:-0}" == 1 ]]; then
+    printf '%s\n' 'Request timed out'
+    printf '%s\n' 'Permission deny rule "MultiEdit" matches no known tool' >&2
+    return 1
+  fi
+  if [[ "${MOCK_NO_CONVERSATION_FAIL:-0}" == 1 ]]; then
+    printf '%s\n' 'No conversation found with session ID: smoke-session' >&2
+    return 1
+  fi
   if [[ "${MOCK_NETWORK_FAIL:-0}" == 1 ]]; then
     printf '%s\n' 'Request timed out' >&2
     return 1
@@ -113,7 +142,10 @@ MOCK_MISSING_RESULT=0
 MOCK_EMPTY_RESULT=0
 MOCK_INCOMPLETE=0
 MOCK_STDOUT_CONTRACT=0
-export MOCK_LOG MOCK_FAIL MOCK_NETWORK_FAIL MOCK_MISSING_RESULT MOCK_EMPTY_RESULT MOCK_INCOMPLETE MOCK_STDOUT_CONTRACT CONTRACT_TEXT
+MOCK_PERMISSION_FAIL=0
+MOCK_NO_CONVERSATION_FAIL=0
+MOCK_STRICT_CLI=1
+export MOCK_LOG MOCK_FAIL MOCK_NETWORK_FAIL MOCK_MISSING_RESULT MOCK_EMPTY_RESULT MOCK_INCOMPLETE MOCK_STDOUT_CONTRACT MOCK_PERMISSION_FAIL MOCK_NO_CONVERSATION_FAIL MOCK_STRICT_CLI CONTRACT_TEXT
 
 PACKET="$TEST_INPUT/packet.md"
 DELTA="$TEST_INPUT/delta.md"
@@ -126,7 +158,12 @@ grep -Fq -- 'idle-timeout=' "$MOCK_LOG"
 grep -Fq -- '--session-id' "$MOCK_LOG"
 grep -Fq -- "$REVIEW_SESSION_ID" "$MOCK_LOG"
 grep -Fq -- '--allowedTools' "$MOCK_LOG"
-grep -Fq -- "Write($REVIEW_STATE/attempt-1/reviewer-result.md)" "$MOCK_LOG"
+grep -Fq -- "Edit($REVIEW_STATE/attempt-1/reviewer-result.md)" "$MOCK_LOG"
+grep -Fq -- '--tools' "$MOCK_LOG"
+grep -Fq -- 'Read,Glob,Grep,Write' "$MOCK_LOG"
+! grep -Fq -- 'Write(/' "$MOCK_LOG"
+! grep -Fq -- 'MultiEdit' "$MOCK_LOG"
+! grep -Fq -- 'NotebookEdit' "$MOCK_LOG"
 [[ ! -s "$REVIEW_STATE/attempt-1/stdout.txt" ]]
 luna_primary_engineer_review_contract_complete "$REVIEW_STATE/result.txt"
 
@@ -210,6 +247,37 @@ export MOCK_NETWORK_FAIL
 bash "$SCRIPT_DIR/claude-review.sh" retry "$NETWORK_STATE" >/dev/null
 [[ "$(cat "$NETWORK_STATE/stage")" == done ]]
 grep -Fq -- '--resume' "$MOCK_LOG"
+
+NO_CONVERSATION_STATE="$(luna_primary_engineer_new_review_dir)"
+MOCK_NETWORK_FAIL=1
+export MOCK_NETWORK_FAIL
+if bash "$SCRIPT_DIR/claude-review.sh" start "$PACKET" "$NO_CONVERSATION_STATE" smoke-no-conversation >/dev/null 2>&1; then
+  echo "FAIL: network setup unexpectedly succeeded" >&2
+  exit 1
+fi
+[[ "$(cat "$NO_CONVERSATION_STATE/stage")" == blocked ]]
+MOCK_NETWORK_FAIL=0
+MOCK_NO_CONVERSATION_FAIL=1
+export MOCK_NETWORK_FAIL MOCK_NO_CONVERSATION_FAIL
+if bash "$SCRIPT_DIR/claude-review.sh" retry "$NO_CONVERSATION_STATE" >/dev/null 2>&1; then
+  echo "FAIL: missing conversation unexpectedly succeeded" >&2
+  exit 1
+fi
+[[ "$(cat "$NO_CONVERSATION_STATE/stage")" == failed ]]
+MOCK_NO_CONVERSATION_FAIL=0
+export MOCK_NO_CONVERSATION_FAIL
+
+PERMISSION_STATE="$(luna_primary_engineer_new_review_dir)"
+MOCK_PERMISSION_FAIL=1
+export MOCK_PERMISSION_FAIL
+if bash "$SCRIPT_DIR/claude-review.sh" start "$PACKET" "$PERMISSION_STATE" smoke-permission-error >/dev/null 2>&1; then
+  echo "FAIL: permission error unexpectedly succeeded" >&2
+  exit 1
+fi
+[[ "$(cat "$PERMISSION_STATE/stage")" == failed ]]
+[[ ! -e "$PERMISSION_STATE/blocked_reason" ]]
+MOCK_PERMISSION_FAIL=0
+export MOCK_PERMISSION_FAIL
 
 FAIL_STATE="$(luna_primary_engineer_new_review_dir)"
 bash "$SCRIPT_DIR/claude-review.sh" start "$PACKET" "$FAIL_STATE" smoke-failure >/dev/null

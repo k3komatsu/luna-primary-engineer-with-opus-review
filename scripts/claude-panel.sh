@@ -48,9 +48,9 @@ build_base_args() {
     --permission-mode dontAsk --permission-prompts none --tools "$tools"
   )
   if [[ "$handoff_mode" == file ]]; then
-    BASE_ARGS+=(--allowedTools "Write($result_file)" --disallowedTools Edit MultiEdit NotebookEdit Bash "mcp__*")
+    BASE_ARGS+=(--allowedTools "Edit($result_file)" --disallowedTools Bash "mcp__*")
   else
-    BASE_ARGS+=(--disallowedTools Write Edit MultiEdit NotebookEdit Bash "mcp__*")
+    BASE_ARGS+=(--disallowedTools Bash "mcp__*")
   fi
   BASE_ARGS+=(--append-system-prompt "$SYSTEM_PROMPT_TEXT" --disable-slash-commands --no-chrome --no-session-persistence)
 }

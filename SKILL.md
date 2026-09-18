@@ -3,7 +3,7 @@ name: luna-primary-engineer
 description: Context-efficient Codex engineering workflow. Luna Max/Fast is the persistent Primary Engineer with Ponytail FULL; Claude Opus provides optional read-only foreground review and focused multi-angle advice; Luna workers are parallel-only; Sol/Astra are rare final advisors.
 ---
 
-# Luna Primary Engineer v6.7
+# Luna Primary Engineer v6.7.1
 
 Operate as the Primary Engineer, not as a manager that reflexively delegates.
 Luna owns investigation, planning, implementation, testing, integration, and
@@ -106,24 +106,29 @@ be ignored by Git.
 ## Result-file contract and handoff
 
 Claude does not return the review by stdout. Each call receives one exact
-absolute designated result path. With a current Claude Code CLI that supports
-path-scoped permission rules, the wrapper enables `Write` only for:
+absolute designated result path. With Claude Code 2.1.266 and compatible
+versions, the wrapper exposes `Write` but scopes the file permission with the
+`Edit` rule:
 
 ```text
-Write(<exact-result-path>)
+Edit(<exact-result-path>)
 ```
 
-It enables no generic `Edit`, `Bash`, notebook, or MCP tool. The reviewer system
-prompt explicitly says `指定結果ファイル以外は絶対に編集しない` and forbids
-editing implementation files. The wrapper validates the path, snapshots the
-repository status before and after the call, and rejects any implementation
-change that escapes the read-only boundary.
+Claude Code uses `Edit(path)` permission rules for all file-editing tools,
+including `Write`. The `--tools` allowlist exposes only `Read,Glob,Grep,Write`,
+and the wrapper denies Bash and MCP; it does not pass unsupported deny names
+such as `MultiEdit`. The reviewer system prompt explicitly says
+`指定結果ファイル以外は絶対に編集しない` and forbids editing implementation
+files. The wrapper validates the path, snapshots the repository status before
+and after the call, and rejects any implementation change that escapes the
+read-only boundary.
 
-If the Claude CLI does not expose the required path-scoped permission
-interface, the helper does not enable a generic write tool. It asks for a
-framed `LUNA_RESULT_BEGIN` / `LUNA_RESULT_END` handoff, writes that validated
-frame into the designated file itself, and then treats the file—not raw
-stdout—as the canonical result. `LUNA_PRIMARY_ENGINEER_CLAUDE_RESULT_HANDOFF=stdout`
+The presence of `--allowedTools` in `claude --help` alone does not prove that
+every permission-rule spelling is supported. If the CLI does not expose a
+usable path-scoped file rule, the helper does not enable a generic write tool.
+It asks for a framed `LUNA_RESULT_BEGIN` / `LUNA_RESULT_END` handoff, writes
+that validated frame into the designated file itself, and then treats the
+file—not raw stdout—as the canonical result. `LUNA_PRIMARY_ENGINEER_CLAUDE_RESULT_HANDOFF=stdout`
 can force this conservative mode for testing or compatibility.
 
 For an ordinary review and re-review, the designated file must contain all of:
@@ -161,7 +166,9 @@ The initial ordinary call stores an explicit UUID session ID. `resume` uses
 `--resume` with that same ID and passes the original packet, previous result,
 and fix delta as explicit context. `retry` is only an explicitly requested
 retry of an initial network-blocked call and reuses the same session; it does
-not create `state2`. Re-review findings must be closed or kept open in
+not create `state2`. A CLI validation error or `No conversation found` is not
+a network block and is terminal until the caller explicitly starts a new
+review. Re-review findings must be closed or kept open in
 `PREVIOUS_FINDINGS`.
 
 The wrapper defaults API, stream-idle, byte-idle, and first-byte timeouts to
@@ -207,16 +214,19 @@ follow-up reads the prior branch result and new delta in a fresh call.
 
 Reviewer and panel calls use:
 
-- `--permission-mode dontAsk` and `--permission-prompts none`;
-- `Read,Glob,Grep` plus only the exact path-scoped `Write` exception when
-  supported;
-- explicit denial of `Edit`, `Bash`, notebook editing, and `mcp__*`;
+- `--permission-mode dontAsk` and `--permission-prompts none` (this is not
+  Plan mode; unapproved tools are denied rather than waiting for approval);
+- `Read,Glob,Grep` plus `Write` scoped by the exact `Edit(path)` permission
+  rule when supported;
+- no generic Edit, Bash, notebook, or MCP tool;
 - no repository implementation editing or recursive subagents.
 
 If `ANTHROPIC_API_KEY` is set, treat Claude usage as potentially API-billed.
 Use `claude auth status` and `claude doctor` for authentication and transport
 diagnostics. Authentication success does not prove API reachability from a
-Codex sandbox.
+Codex sandbox. In a network-restricted Codex execution, the caller must obtain
+network-enabled command execution for a real Opus request; `claude doctor`
+success alone is not a review result.
 
 ## Other roles
 

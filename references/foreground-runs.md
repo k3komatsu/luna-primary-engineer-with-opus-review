@@ -56,7 +56,10 @@ An empty stdout stream is harmless when the designated file is complete. A
 missing, empty, or incomplete designated file is a technical failure and its
 stdout/stderr diagnostics are reported. It is never an automatic retry
 condition. A network-blocked state is retried only by an explicit user-approved
-`retry` or `resume` using the same ordinary session.
+`retry` or `resume` using the same ordinary session. CLI validation errors,
+unsupported permission rules, and `No conversation found` are not network
+blocks even if stdout also contains `Request timed out`; they remain terminal
+and must not cause a new session to be created automatically.
 
 If Claude preflight fails before launch, or the user disabled Claude before
 launch, use the Luna fallback with its explicit markers. Once Claude has

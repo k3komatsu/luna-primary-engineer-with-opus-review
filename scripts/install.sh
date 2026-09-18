@@ -58,7 +58,7 @@ EOF2
 
 if [[ -f "${HOME}/.config/ponytail/config.json" ]] && grep -Eqi '"defaultMode"[[:space:]]*:[[:space:]]*"(lite|full|ultra)"' "${HOME}/.config/ponytail/config.json"; then
   echo "WARNING: A global Ponytail configuration appears active."
-  echo "         Strict v6.7 independence expects reviewers/advisors to remain Ponytail-free."
+  echo "         Strict v6.7.1 independence expects reviewers/advisors to remain Ponytail-free."
 fi
 
 if command -v claude >/dev/null 2>&1; then
@@ -77,7 +77,7 @@ if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
 fi
 
 printf '%s\n' \
-  "Installed Luna Primary Engineer v6.7 to: $SKILL_DEST" \
+  "Installed Luna Primary Engineer v6.7.1 to: $SKILL_DEST" \
   "Installed custom agents to: $AGENT_DEST" \
   "Installed private Ponytail dependency to: $PONYTAIL_DEST" \
   "Primary Ponytail reference: $SKILL_DEST/references/ponytail/SKILL.md" \

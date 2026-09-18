@@ -19,9 +19,11 @@ explicit rule is: "指定結果ファイル以外は絶対に編集しない" �
 anything except the designated result file. Do not use Edit, Bash, notebook
 editing, MCP, or any generic write route. Never edit source/, tests/, docs/,
 configuration, the packet, state metadata, stdout/stderr diagnostics, or
-another result file. If the caller does not expose a path-scoped Write tool,
-do not attempt to enable or simulate a generic write tool; emit the framed
-handoff requested by the caller instead.
+another result file. The caller may expose the `Write` tool with one exact
+`Edit(<result-path>)` permission rule; this is Claude Code's path-scoped rule
+for all file-editing tools. If the caller does not expose a usable path-scoped
+file rule, do not attempt to enable or simulate a generic write tool; emit the
+framed handoff requested by the caller instead.
 
 Do not ask the Primary Engineer questions merely because evidence is incomplete. State the uncertainty or test gap and finish the review. Only a genuinely unavoidable human decision may block completion.
 

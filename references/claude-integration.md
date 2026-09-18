@@ -25,8 +25,8 @@ The common options are:
 --permission-mode dontAsk
 --permission-prompts none
 --tools Read,Glob,Grep,Write     # Write only in path-scoped mode
---allowedTools Write(<exact-result-file>)
---disallowedTools Edit MultiEdit NotebookEdit Bash mcp__*
+--allowedTools Edit(<exact-result-file>)
+--disallowedTools Bash mcp__*
 --disable-slash-commands
 --no-chrome
 ```
@@ -36,7 +36,12 @@ exact absolute designated result file and must never edit anything else. The
 wrapper also snapshots Git status before and after the call, so an escaped
 implementation edit fails the review.
 
-If the installed Claude CLI does not expose the path-scoped permission
+Claude Code uses the `Edit(path)` permission grammar to scope all file-editing
+tools, including the `Write` tool. The presence of `--allowedTools` in help is
+not enough to prove that every rule spelling is supported; the helper does not
+pass unsupported deny names such as `MultiEdit`.
+
+If the installed Claude CLI does not expose a usable path-scoped permission
 interface, the helper does not enable generic Write/Edit/Bash. It asks Claude
 for a `LUNA_RESULT_BEGIN` / `LUNA_RESULT_END` framed handoff, writes that
 validated frame into the designated result file, and still treats the file as
@@ -86,8 +91,9 @@ Authentication success does not prove that the current Codex command
 environment can reach the Anthropic API. A recognizable transport failure is
 stored as `stage=blocked` with `blocked_reason=network`; the session and
 diagnostics remain available for an explicitly approved `retry` on the same
-state. A non-network failure or an invalid result is terminal until the user
-chooses a next step.
+state. CLI permission/argument errors and `No conversation found` take
+precedence over generic timeout text and are terminal until the user chooses
+a next step.
 
 `ANTHROPIC_API_KEY` may indicate API-billed authentication and is reported by
 the helpers. The API, stream-idle, byte-idle, and first-byte timeout defaults

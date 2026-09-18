@@ -268,9 +268,10 @@ luna_primary_engineer_require_fresh_state_tree() {
 }
 
 # Run Claude in the foreground and persist separate diagnostics and exit code.
-# The result file is intentionally not stdout. In `file` mode Claude is given a
-# path-scoped Write permission; in `stdout` mode the caller uses a framed,
-# validated handoff because generic Write/Edit/Bash is not enabled.
+# The result file is intentionally not stdout. In `file` mode Claude is given
+# an exact Edit(path) permission rule that scopes the Write tool; in `stdout`
+# mode the caller uses a framed, validated handoff because generic
+# Write/Edit/Bash is not enabled.
 luna_primary_engineer_run_foreground() {
   local result_file="$1" stdout_file="$2" stderr_file="$3" exit_file="$4" handoff_mode="$5" rc=0
   local api_timeout_ms="${API_TIMEOUT_MS:-600000}"
@@ -318,9 +319,10 @@ luna_primary_engineer_result_handoff_mode() {
     return 0
   fi
   help="$(claude --help 2>&1 || true)"
-  # Current Claude Code exposes path-scoped permission rules through
-  # --allowedTools. If that interface is absent, use the framed safe handoff
-  # and do not enable any generic write-capable tool.
+  # Current Claude Code exposes permission rules through --allowedTools. The
+  # file handoff uses Edit(path) syntax because Claude Code applies Edit rules
+  # to all file-editing tools, including Write. If the interface is absent,
+  # use the framed safe handoff and do not enable any generic write tool.
   if grep -q -- '--allowedTools' <<< "$help" && grep -q -- '--tools' <<< "$help" && grep -q -- '--disallowedTools' <<< "$help"; then
     printf 'file\n'
   else
@@ -357,6 +359,17 @@ luna_primary_engineer_review_contract_complete() {
 
 luna_primary_engineer_review_network_failure() {
   local file
+  # A CLI validation/configuration error takes precedence even if stdout also
+  # contains a generic "Request timed out" message. Such a process never
+  # reached a resumable Claude conversation and must not be retried as network.
+  for file in "$@"; do
+    [[ -f "$file" ]] || continue
+    if grep -Eiq \
+      'Permission (allow|deny) rule|unknown tool|check for typos|unknown option|invalid option|No conversation found' \
+      "$file"; then
+      return 1
+    fi
+  done
   for file in "$@"; do
     [[ -f "$file" ]] || continue
     if grep -Eiq \

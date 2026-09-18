@@ -35,6 +35,19 @@ if [[ -f "${HOME}/.agents/skills/luna-primary-engineer/references/claude/reviewe
 else
   echo "FAIL reviewer result-file-only exception is missing"; FAIL=1
 fi
+if rg -n -S 'Write\(\$result_file\)|MultiEdit|NotebookEdit' "${RUNTIME_SCRIPTS[@]}" >/dev/null 2>&1; then
+  echo "FAIL review scripts contain unsupported or unscoped Claude tool rules"; FAIL=1
+else
+  echo "OK   review scripts use the supported scoped file rule"
+fi
+if grep -Fq -- '--allowedTools "Edit($result_file)"' \
+    "${HOME}/.agents/skills/luna-primary-engineer/scripts/claude-review.sh" && \
+  grep -Fq -- '--allowedTools "Edit($result_file)"' \
+    "${HOME}/.agents/skills/luna-primary-engineer/scripts/claude-panel.sh"; then
+  echo "OK   review and panel use Edit(path) for the exact result file"
+else
+  echo "FAIL review or panel lacks the Edit(path) result-file rule"; FAIL=1
+fi
 if [[ -f "${HOME}/.agents/skills/luna-primary-engineer/scripts/self-test.sh" ]] && bash "${HOME}/.agents/skills/luna-primary-engineer/scripts/self-test.sh" >/dev/null 2>&1; then
   echo "OK   Claude helper self-test"
 else
@@ -96,7 +109,7 @@ if command -v claude >/dev/null 2>&1; then
   if grep -q -- '--session-id' <<<"$HELP"; then echo "OK   Claude Code supports explicit session IDs"; else echo "FAIL Claude Code lacks --session-id; sticky re-review cannot start"; FAIL=1; fi
   if grep -q -- '--resume' <<<"$HELP"; then echo "OK   Claude Code supports session resume"; else echo "FAIL Claude Code lacks --resume; sticky re-review cannot continue"; FAIL=1; fi
   if grep -q -- '--no-session-persistence' <<<"$HELP"; then echo "OK   Claude Code supports non-persistent foreground sessions"; else echo "WARN Claude Code lacks --no-session-persistence; foreground runs may leave session state"; fi
-  if grep -q -- '--allowedTools' <<<"$HELP"; then echo "OK   Claude Code exposes path-scoped permission rules"; else echo "WARN Claude Code lacks --allowedTools; helper will use framed read-only result handoff"; fi
+  if grep -q -- '--allowedTools' <<<"$HELP"; then echo "OK   Claude Code exposes permission rules; helper uses Edit(path) scoping"; else echo "WARN Claude Code lacks --allowedTools; helper will use framed read-only result handoff"; fi
 else
   echo "WARN Claude Code not installed; fallback Luna review will be used"
 fi

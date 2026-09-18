@@ -31,8 +31,9 @@ approval. It keeps the same state and Claude session, and should be run through
 network-enabled command execution. `resume` continues the Claude session
 created by `start` in a new foreground turn. The fix delta is supplied as the
 new user turn, while the original packet and previous review remain in the
-conversation context. The wrapper validates the designated result file and
-never retries because stdout is empty.
+conversation context. CLI permission errors and `No conversation found` are
+terminal technical failures, not retryable network states. The wrapper
+validates the designated result file and never retries because stdout is empty.
 
 ## High-risk dual review
 

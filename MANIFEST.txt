@@ -1,4 +1,4 @@
-Luna Primary Engineer v6.7
+Luna Primary Engineer v6.7.1
 - Primary: Luna Max/Fast + Ponytail FULL
 - Ordinary review: one Claude Opus synchronous reviewer with a persisted session, xhigh effort, read-only implementation boundary
 - Result handoff: designated absolute result file -> contract validation -> adopted result.txt; stdout/stderr are separate diagnostics
@@ -7,7 +7,7 @@ Luna Primary Engineer v6.7
 - Workspace: current Git worktree tmp/luna-primary-engineer/reviews/<unique-id>; no system temporary directories or symlinked review roots
 - Lifecycle: foreground start/resume; explicit wrapper background/status forms when the caller must stop waiting; no Claude daemon dependency
 - Retry discipline: empty output, invalid result, timeout, or transport failure never auto-launches another review; retry/re-review requires explicit approval
-- Permission discipline: dontAsk + permission-prompts none + Read/Glob/Grep + exact path-scoped Write only; Edit/Bash/notebook/MCP denied
+- Permission discipline: dontAsk + permission-prompts none + Read/Glob/Grep + Write scoped by exact Edit(path) only; generic Edit/Bash/notebook/MCP unavailable
 - Verification: bash scripts/self-test.sh covers designated-file success with empty stdout, framed fallback, contract failures, workspace guards, sticky review, network-block retry, dual, panel, and static path checks
 - Dual high-risk review: neutral foreground Opus seed -> two blind independent foreground reviewers
 - Review fallback: Luna Max/Standard, read-only, no Ponytail, preflight-only

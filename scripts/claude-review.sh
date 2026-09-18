@@ -65,17 +65,18 @@ build_base_args() {
     --tools "$tools"
   )
   if [[ "$handoff_mode" == file ]]; then
-    # The only write-capable permission is the exact result file. Edit, Bash,
-    # NotebookEdit, and MCP are denied independently of the tools list.
+    # Claude Code's file permission grammar uses Edit(path) to scope all file
+    # editing tools, including Write. Keep Write in the tool surface so Claude
+    # can create the designated file, but do not expose generic Edit/Bash/MCP.
     BASE_ARGS+=(
-      --allowedTools "Write($result_file)"
-      --disallowedTools Edit MultiEdit NotebookEdit Bash "mcp__*"
+      --allowedTools "Edit($result_file)"
+      --disallowedTools Bash "mcp__*"
     )
   else
-    # This mode is used only when the installed Claude CLI cannot expose a
-    # reliable path-scoped Write rule. The framed stdout handoff is parsed by
-    # the wrapper; generic write tools stay disabled.
-    BASE_ARGS+=(--disallowedTools Write Edit MultiEdit NotebookEdit Bash "mcp__*")
+    # This mode is used when the installed Claude CLI cannot expose a reliable
+    # path-scoped file rule. The framed stdout handoff is parsed by the
+    # wrapper; the tool allowlist keeps all write-capable tools unavailable.
+    BASE_ARGS+=(--disallowedTools Bash "mcp__*")
   fi
   BASE_ARGS+=(
     --append-system-prompt "$SYSTEM_PROMPT_TEXT"
