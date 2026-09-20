@@ -27,6 +27,14 @@ If sandbox policy denies `ps`, liveness is reported as `unknown` with
 that output as an instruction to obtain execution-permission escalation and
 rerun `status` with process-list access.
 
+Review input can be the legacy packet file or a directory containing
+`review-packet.md` and an optional `review-prompt.md` (`prompt.md` is accepted
+as an alias). The wrapper copies these inputs into the fresh state directory
+and passes paths to Claude. A pre-populated state directory is rejected to
+protect existing review data; the prompt is context only and cannot override
+the wrapper's safety or result-contract instructions. Bundle members must be
+non-empty regular files and must not be symlinks.
+
 ## Read-only boundary and result handoff
 
 The common options are:

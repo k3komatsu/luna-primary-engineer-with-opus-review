@@ -19,8 +19,8 @@ Primary implements + validates
 Commands:
 
 ```bash
-claude-review.sh start REVIEW_PACKET STATE_DIR reviewer-1
-claude-review.sh start-background REVIEW_PACKET STATE_DIR reviewer-1
+claude-review.sh start REVIEW_INPUT STATE_DIR reviewer-1
+claude-review.sh start-background REVIEW_INPUT STATE_DIR reviewer-1
 claude-review.sh status STATE_DIR
 claude-review.sh collect STATE_DIR
 claude-review.sh retry STATE_DIR
@@ -54,7 +54,7 @@ foreground Reviewer 1 + foreground Reviewer 2
 ```
 
 ```bash
-claude-review.sh dual-start REVIEW_PACKET GROUP_DIR
+claude-review.sh dual-start REVIEW_INPUT GROUP_DIR
 claude-review.sh dual-status GROUP_DIR
 claude-review.sh dual-advance GROUP_DIR
 claude-review.sh dual-collect GROUP_DIR
@@ -63,7 +63,24 @@ claude-review.sh dual-collect GROUP_DIR
 The two reviewers run sequentially and independently. Neither reads the other
 reviewer's result before completing its own analysis.
 
-## Review packet
+## Review input
+
+`REVIEW_INPUT` can remain a single packet file for backward compatibility. To
+keep a reviewer-specific prompt with the reproducible review state, pass a
+bundle directory instead:
+
+```text
+review-input/
+  review-packet.md          # required factual context
+  review-prompt.md          # optional reviewer focus/instructions
+```
+
+`prompt.md` is accepted as a compatibility alias, but it must not appear
+together with `review-prompt.md`. The wrapper copies both files into the fresh
+state directory and stores `prompt_path`; a pre-populated state directory is
+still rejected so old review data cannot be overwritten. Bundle members must
+be non-empty regular files and must not be symlinks. The prompt is context
+only: wrapper safety rules and the result contract take precedence.
 
 Provide:
 

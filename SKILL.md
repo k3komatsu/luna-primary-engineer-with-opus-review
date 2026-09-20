@@ -100,7 +100,7 @@ They wait for Claude to exit and never cut a PTY to force a result. If the
 caller must stop waiting, use the explicit wrapper-owned forms:
 
 ```bash
-bash scripts/claude-review.sh start-background REVIEW_PACKET [STATE_DIR] [LABEL]
+bash scripts/claude-review.sh start-background REVIEW_INPUT [STATE_DIR] [LABEL]
 bash scripts/claude-review.sh status STATE_DIR
 bash scripts/claude-review.sh resume-background STATE_DIR FIX_DELTA
 ```
@@ -120,6 +120,25 @@ change state or relaunch. Request execution-permission escalation and rerun
 
 `dual-start`, `dual-advance`, and panel operations remain sequential foreground
 calls. The panel and dual paths use the same result-file and workspace rules.
+
+## Review input bundle
+
+`start`, `start-background`, and `dual-start` accept either the original
+single packet file or a review-input directory. A directory must contain:
+
+```text
+review-packet.md          # required factual context
+review-prompt.md          # optional reviewer focus/instructions
+```
+
+`prompt.md` is accepted as a compatibility alias. The wrapper copies the
+packet and optional prompt into the fresh review state, records `packet_path`
+and `prompt_path`, and passes their paths to Claude without inlining their
+contents into shell arguments. The prompt is review context only; wrapper
+safety rules, the designated result path, and the result contract cannot be
+overridden by it. Bundle members must be non-empty regular files and must not
+be symlinks. The state directory must still be empty before `start`, so do not
+pre-populate it manually.
 
 ## Review workspace and state
 
@@ -200,7 +219,7 @@ scope check, and worktree workspace.
 ## Ordinary review
 
 ```bash
-bash scripts/claude-review.sh start REVIEW_PACKET [STATE_DIR] [LABEL]
+bash scripts/claude-review.sh start REVIEW_INPUT [STATE_DIR] [LABEL]
 bash scripts/claude-review.sh status STATE_DIR
 bash scripts/claude-review.sh collect STATE_DIR
 bash scripts/claude-review.sh retry STATE_DIR
@@ -228,7 +247,7 @@ ordering, public protocols, delicate mathematics, broad compatibility, or
 serious reviewer disagreement.
 
 ```bash
-bash scripts/claude-review.sh dual-start REVIEW_PACKET [GROUP_DIR]
+bash scripts/claude-review.sh dual-start REVIEW_INPUT [GROUP_DIR]
 bash scripts/claude-review.sh dual-status GROUP_DIR
 bash scripts/claude-review.sh dual-advance GROUP_DIR
 bash scripts/claude-review.sh dual-collect GROUP_DIR

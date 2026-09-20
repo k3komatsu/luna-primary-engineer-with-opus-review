@@ -183,6 +183,10 @@ PACKET="$TEST_INPUT/packet.md"
 DELTA="$TEST_INPUT/delta.md"
 printf '%s\n' '# smoke packet' > "$PACKET"
 printf '%s\n' '# smoke delta' > "$DELTA"
+REVIEW_BUNDLE="$TEST_INPUT/review-bundle"
+mkdir "$REVIEW_BUNDLE"
+printf '%s\n' '# bundled smoke packet' > "$REVIEW_BUNDLE/review-packet.md"
+printf '%s\n' 'Focus on the review-input handoff and state reproducibility.' > "$REVIEW_BUNDLE/review-prompt.md"
 REVIEW_STATE="$(luna_primary_engineer_new_review_dir)"
 bash "$SCRIPT_DIR/claude-review.sh" start "$PACKET" "$REVIEW_STATE" smoke >/dev/null
 REVIEW_SESSION_ID="$(cat "$REVIEW_STATE/session_id")"
@@ -203,6 +207,122 @@ luna_primary_engineer_review_contract_complete "$REVIEW_STATE/result.txt"
 REVIEW_STATUS="$(bash "$SCRIPT_DIR/claude-review.sh" status "$REVIEW_STATE")"
 grep -Eq '^RUNNER_PID=[1-9][0-9]*$' <<< "$REVIEW_STATUS"
 grep -Eq '^CLAUDE_PID=[1-9][0-9]*$' <<< "$REVIEW_STATUS"
+
+BUNDLE_STATE="$(luna_primary_engineer_new_review_dir)"
+bash "$SCRIPT_DIR/claude-review.sh" start "$REVIEW_BUNDLE" "$BUNDLE_STATE" smoke-bundle >/dev/null
+cmp -s "$REVIEW_BUNDLE/review-packet.md" "$BUNDLE_STATE/review-packet.md"
+cmp -s "$REVIEW_BUNDLE/review-prompt.md" "$BUNDLE_STATE/review-prompt.md"
+[[ "$(cat "$BUNDLE_STATE/prompt_path")" == "$BUNDLE_STATE/review-prompt.md" ]]
+grep -Fq -- "$BUNDLE_STATE/review-prompt.md" "$MOCK_LOG"
+! grep -Fq -- 'Focus on the review-input handoff' "$MOCK_LOG"
+luna_primary_engineer_review_contract_complete "$BUNDLE_STATE/result.txt"
+
+ALIAS_BUNDLE="$TEST_INPUT/review-bundle-alias"
+mkdir "$ALIAS_BUNDLE"
+printf '%s\n' '# alias packet' > "$ALIAS_BUNDLE/review-packet.md"
+printf '%s\n' 'alias prompt' > "$ALIAS_BUNDLE/prompt.md"
+ALIAS_STATE="$(luna_primary_engineer_new_review_dir)"
+bash "$SCRIPT_DIR/claude-review.sh" start "$ALIAS_BUNDLE" "$ALIAS_STATE" prompt-alias >/dev/null
+cmp -s "$ALIAS_BUNDLE/prompt.md" "$ALIAS_STATE/review-prompt.md"
+
+AMBIGUOUS_BUNDLE="$TEST_INPUT/review-bundle-ambiguous"
+mkdir "$AMBIGUOUS_BUNDLE"
+printf '%s\n' '# ambiguous packet' > "$AMBIGUOUS_BUNDLE/review-packet.md"
+printf '%s\n' 'preferred prompt' > "$AMBIGUOUS_BUNDLE/review-prompt.md"
+printf '%s\n' 'alias prompt' > "$AMBIGUOUS_BUNDLE/prompt.md"
+AMBIGUOUS_STATE="$(luna_primary_engineer_new_review_dir)"
+if bash "$SCRIPT_DIR/claude-review.sh" start "$AMBIGUOUS_BUNDLE" "$AMBIGUOUS_STATE" ambiguous >/dev/null 2>"$TEST_INPUT/ambiguous-error.log"; then
+  echo "FAIL: ambiguous prompt aliases were accepted" >&2
+  exit 1
+fi
+grep -Fq -- 'contains both review-prompt.md and prompt.md' "$TEST_INPUT/ambiguous-error.log"
+
+MISSING_PACKET_BUNDLE="$TEST_INPUT/review-bundle-missing-packet"
+mkdir "$MISSING_PACKET_BUNDLE"
+printf '%s\n' 'prompt without packet' > "$MISSING_PACKET_BUNDLE/review-prompt.md"
+MISSING_PACKET_STATE="$(luna_primary_engineer_new_review_dir)"
+if bash "$SCRIPT_DIR/claude-review.sh" start "$MISSING_PACKET_BUNDLE" "$MISSING_PACKET_STATE" missing-packet >/dev/null 2>"$TEST_INPUT/missing-packet-error.log"; then
+  echo "FAIL: bundle without a packet was accepted" >&2
+  exit 1
+fi
+grep -Fq -- 'must contain review-packet.md' "$TEST_INPUT/missing-packet-error.log"
+
+EMPTY_PACKET_BUNDLE="$TEST_INPUT/review-bundle-empty-packet"
+mkdir "$EMPTY_PACKET_BUNDLE"
+: > "$EMPTY_PACKET_BUNDLE/review-packet.md"
+EMPTY_PACKET_STATE="$(luna_primary_engineer_new_review_dir)"
+if bash "$SCRIPT_DIR/claude-review.sh" start "$EMPTY_PACKET_BUNDLE" "$EMPTY_PACKET_STATE" empty-packet >/dev/null 2>"$TEST_INPUT/empty-packet-error.log"; then
+  echo "FAIL: empty bundle packet was accepted" >&2
+  exit 1
+fi
+grep -Fq -- 'review packet is empty' "$TEST_INPUT/empty-packet-error.log"
+
+EMPTY_PROMPT_BUNDLE="$TEST_INPUT/review-bundle-empty-prompt"
+mkdir "$EMPTY_PROMPT_BUNDLE"
+printf '%s\n' '# packet with empty prompt' > "$EMPTY_PROMPT_BUNDLE/review-packet.md"
+: > "$EMPTY_PROMPT_BUNDLE/review-prompt.md"
+EMPTY_PROMPT_STATE="$(luna_primary_engineer_new_review_dir)"
+if bash "$SCRIPT_DIR/claude-review.sh" start "$EMPTY_PROMPT_BUNDLE" "$EMPTY_PROMPT_STATE" empty-prompt >/dev/null 2>"$TEST_INPUT/empty-prompt-error.log"; then
+  echo "FAIL: empty bundle prompt was accepted" >&2
+  exit 1
+fi
+grep -Fq -- 'review prompt is empty' "$TEST_INPUT/empty-prompt-error.log"
+
+SYMLINK_TARGET="$TEST_INPUT/symlink-target.md"
+printf '%s\n' 'symlink target' > "$SYMLINK_TARGET"
+SYMLINK_PACKET_BUNDLE="$TEST_INPUT/review-bundle-symlink-packet"
+mkdir "$SYMLINK_PACKET_BUNDLE"
+ln -s "$SYMLINK_TARGET" "$SYMLINK_PACKET_BUNDLE/review-packet.md"
+SYMLINK_PACKET_STATE="$(luna_primary_engineer_new_review_dir)"
+if bash "$SCRIPT_DIR/claude-review.sh" start "$SYMLINK_PACKET_BUNDLE" "$SYMLINK_PACKET_STATE" symlink-packet >/dev/null 2>"$TEST_INPUT/symlink-packet-error.log"; then
+  echo "FAIL: symlinked bundle packet was accepted" >&2
+  exit 1
+fi
+grep -Fq -- 'packet must not be a symlink' "$TEST_INPUT/symlink-packet-error.log"
+
+SYMLINK_PROMPT_BUNDLE="$TEST_INPUT/review-bundle-symlink-prompt"
+mkdir "$SYMLINK_PROMPT_BUNDLE"
+printf '%s\n' '# packet with symlink prompt' > "$SYMLINK_PROMPT_BUNDLE/review-packet.md"
+ln -s "$SYMLINK_TARGET" "$SYMLINK_PROMPT_BUNDLE/review-prompt.md"
+SYMLINK_PROMPT_STATE="$(luna_primary_engineer_new_review_dir)"
+if bash "$SCRIPT_DIR/claude-review.sh" start "$SYMLINK_PROMPT_BUNDLE" "$SYMLINK_PROMPT_STATE" symlink-prompt >/dev/null 2>"$TEST_INPUT/symlink-prompt-error.log"; then
+  echo "FAIL: symlinked bundle prompt was accepted" >&2
+  exit 1
+fi
+grep -Fq -- 'prompt must not be a symlink' "$TEST_INPUT/symlink-prompt-error.log"
+
+SYMLINK_DIR_BUNDLE="$TEST_INPUT/review-bundle-symlink-dir"
+ln -s "$REVIEW_BUNDLE" "$SYMLINK_DIR_BUNDLE"
+SYMLINK_DIR_STATE="$(luna_primary_engineer_new_review_dir)"
+if bash "$SCRIPT_DIR/claude-review.sh" start "$SYMLINK_DIR_BUNDLE" "$SYMLINK_DIR_STATE" symlink-dir >/dev/null 2>"$TEST_INPUT/symlink-dir-error.log"; then
+  echo "FAIL: symlinked review bundle directory was accepted" >&2
+  exit 1
+fi
+grep -Fq -- 'directory must not be a symlink' "$TEST_INPUT/symlink-dir-error.log"
+
+INVALID_INPUT_STATE="$(luna_primary_engineer_new_review_dir)"
+if bash "$SCRIPT_DIR/claude-review.sh" start "$TEST_INPUT/no-such-review-input" "$INVALID_INPUT_STATE" invalid-input >/dev/null 2>"$TEST_INPUT/invalid-input-error.log"; then
+  echo "FAIL: invalid review input was accepted" >&2
+  exit 1
+fi
+grep -Fq -- 'not a packet file or bundle directory' "$TEST_INPUT/invalid-input-error.log"
+
+BUNDLE_RESUME_LOG="$TEST_INPUT/bundle-resume-args.log"
+MOCK_LOG="$BUNDLE_RESUME_LOG"
+export MOCK_LOG
+bash "$SCRIPT_DIR/claude-review.sh" resume "$BUNDLE_STATE" "$DELTA" >/dev/null
+[[ -f "$BUNDLE_STATE/rereview-1/prompt_path" ]]
+grep -Fq -- "$BUNDLE_STATE/review-prompt.md" "$BUNDLE_RESUME_LOG"
+MOCK_LOG="$SMOKE_DIR/claude-args.log"
+export MOCK_LOG
+
+PREFILLED_STATE="$(luna_primary_engineer_new_review_dir)"
+printf '%s\n' 'prompt must be supplied through a bundle, not a prefilled state' > "$PREFILLED_STATE/review-prompt.md"
+if bash "$SCRIPT_DIR/claude-review.sh" start "$REVIEW_BUNDLE" "$PREFILLED_STATE" prefilled-state >/dev/null 2>"$TEST_INPUT/prefilled-state-error.log"; then
+  echo "FAIL: a prefilled state directory was accepted" >&2
+  exit 1
+fi
+grep -Fq -- 'state directory is not empty' "$TEST_INPUT/prefilled-state-error.log"
 
 bash "$SCRIPT_DIR/claude-review.sh" resume "$REVIEW_STATE" "$DELTA" >/dev/null
 [[ ! -e "$REVIEW_STATE/user_confirmation_required" ]]
@@ -424,7 +544,7 @@ export MOCK_MISSING_RESULT MOCK_STDOUT_CONTRACT
 NETWORK_STATE="$(luna_primary_engineer_new_review_dir)"
 MOCK_NETWORK_FAIL=1
 export MOCK_NETWORK_FAIL
-if bash "$SCRIPT_DIR/claude-review.sh" start "$PACKET" "$NETWORK_STATE" smoke-network >/dev/null 2>&1; then
+if bash "$SCRIPT_DIR/claude-review.sh" start "$REVIEW_BUNDLE" "$NETWORK_STATE" smoke-network >/dev/null 2>&1; then
   echo "FAIL: network-blocked review unexpectedly succeeded" >&2
   exit 1
 else
@@ -438,6 +558,7 @@ MOCK_NETWORK_FAIL=0
 export MOCK_NETWORK_FAIL
 bash "$SCRIPT_DIR/claude-review.sh" retry "$NETWORK_STATE" >/dev/null
 [[ "$(cat "$NETWORK_STATE/stage")" == done ]]
+[[ -f "$NETWORK_STATE/network-retry-1/prompt_path" ]]
 grep -Fq -- '--resume' "$MOCK_LOG"
 
 NO_CONVERSATION_STATE="$(luna_primary_engineer_new_review_dir)"
@@ -498,8 +619,17 @@ done
 
 # Verify dual result handoff and panel result handoff use the same workspace.
 DUAL_GROUP="$(luna_primary_engineer_new_review_dir)"
-bash "$SCRIPT_DIR/claude-review.sh" dual-start "$PACKET" "$DUAL_GROUP" >/dev/null
+bash "$SCRIPT_DIR/claude-review.sh" dual-start "$REVIEW_BUNDLE" "$DUAL_GROUP" >/dev/null
+cmp -s "$REVIEW_BUNDLE/review-prompt.md" "$DUAL_GROUP/review-prompt.md"
+[[ -f "$DUAL_GROUP/seed/prompt_path" ]]
+DUAL_REVIEW_LOG="$TEST_INPUT/dual-review-args.log"
+MOCK_LOG="$DUAL_REVIEW_LOG"
+export MOCK_LOG
 bash "$SCRIPT_DIR/claude-review.sh" dual-advance "$DUAL_GROUP" >/dev/null
+[[ -f "$DUAL_GROUP/reviewer-1/prompt_path" ]]
+grep -Fq -- "$DUAL_GROUP/review-prompt.md" "$DUAL_REVIEW_LOG"
+MOCK_LOG="$SMOKE_DIR/claude-args.log"
+export MOCK_LOG
 bash "$SCRIPT_DIR/claude-review.sh" dual-collect "$DUAL_GROUP" >/dev/null
 DUAL_NETWORK_GROUP="$(luna_primary_engineer_new_review_dir)"
 bash "$SCRIPT_DIR/claude-review.sh" dual-start "$PACKET" "$DUAL_NETWORK_GROUP" >/dev/null

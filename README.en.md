@@ -87,6 +87,8 @@ After fixes, Luna evaluates finding importance, fix scope, and regression risk. 
 
 Reviews can take several minutes. Claude API and stream timeouts default to 10 minutes. The wrapper validates a designated result file rather than trusting Claude's stdout; stdout and stderr are retained separately for diagnostics, so an empty stdout can still be a successful review. Review state is stored under `tmp/luna-primary-engineer/reviews/` inside the repository.
 
+The legacy single packet file remains supported. To keep a reviewer-specific prompt in the reproducible state, pass an input directory containing `review-packet.md` and optional `review-prompt.md` (`prompt.md` is accepted as an alias). The wrapper copies both into a newly-created empty state directory; do not pre-populate the state directory. Existing state data remains protected and non-empty state directories are rejected. Bundle members must be non-empty regular files and must not be symlinks.
+
 Normal `start` and `resume` calls wait synchronously. If the caller must stop waiting, use the explicit `start-background` or `resume-background` form and inspect the same state with `status`. Never stop an Opus process after launch. If both the runner and Claude PIDs disappear without a result, `status` reports a failed state that requires user confirmation and never relaunches automatically. If either liveness value is `unknown`, the sandbox denied `ps`; escalate execution permission and rerun `status`. See the [Claude integration reference](references/claude-integration.md) for details.
 
 ## Troubleshooting

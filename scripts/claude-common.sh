@@ -239,32 +239,26 @@ luna_primary_engineer_validate_review_descendant_dir() {
   printf '%s\n' "$candidate_resolved"
 }
 
-luna_primary_engineer_require_fresh_state_dir() {
-  local state_dir="$1" evidence
+luna_primary_engineer_require_empty_state() {
+  local state_dir="$1" state_kind="$2" evidence
   if [[ ! -e "$state_dir" ]]; then return 0; fi
   [[ -d "$state_dir" ]] || {
-    echo "ERROR: state path is not a directory: $state_dir" >&2
+    echo "ERROR: $state_kind path is not a directory: $state_dir" >&2
     return 2
   }
   evidence="$(find "$state_dir" -mindepth 1 -print -quit 2>/dev/null || true)"
   if [[ -n "$evidence" ]]; then
-    echo "ERROR: state directory is not empty; existing review data will not be removed or overwritten: $evidence" >&2
+    echo "ERROR: $state_kind is not empty; existing review data will not be removed or overwritten: $evidence" >&2
     return 2
   fi
 }
 
+luna_primary_engineer_require_fresh_state_dir() {
+  luna_primary_engineer_require_empty_state "$1" "state directory"
+}
+
 luna_primary_engineer_require_fresh_state_tree() {
-  local root="$1" evidence
-  if [[ ! -e "$root" ]]; then return 0; fi
-  [[ -d "$root" ]] || {
-    echo "ERROR: state tree path is not a directory: $root" >&2
-    return 2
-  }
-  evidence="$(find "$root" -mindepth 1 -print -quit 2>/dev/null || true)"
-  if [[ -n "$evidence" ]]; then
-    echo "ERROR: state tree is not empty; existing review data will not be removed or overwritten: $evidence" >&2
-    return 2
-  fi
+  luna_primary_engineer_require_empty_state "$1" "state tree"
 }
 
 # Run Claude in the foreground and persist separate diagnostics and exit code.

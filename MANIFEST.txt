@@ -2,6 +2,7 @@ Luna Primary Engineer v6.8.0
 - Invocation: allow_implicit_invocation=false; use only when explicitly selected
 - Primary: Luna Max/Fast + Ponytail FULL
 - Ordinary review: one Claude Opus synchronous reviewer with a persisted session, xhigh effort, read-only implementation boundary
+- Review input: legacy packet file or bundle directory with review-packet.md plus optional review-prompt.md copied into fresh state
 - Result handoff: designated absolute result file -> contract validation -> adopted result.txt; stdout/stderr are separate diagnostics
 - Ordinary contract: VERDICT, BLOCKERS, NONBLOCKING, TEST_GAPS, PREVIOUS_FINDINGS
 - Re-review: same-session resume without extra approval when finding importance, fix scope, or regression risk is high; skip only when all three are low

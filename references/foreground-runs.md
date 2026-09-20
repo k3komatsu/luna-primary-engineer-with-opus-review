@@ -27,7 +27,9 @@ An ordinary state contains:
 
 ```text
 review-packet.md
+review-prompt.md             # optional reviewer context
 packet_path
+prompt_path                  # present when review-prompt.md was supplied
 session_id
 handoff_mode
 stage
@@ -93,8 +95,8 @@ review.
 ## Commands
 
 ```bash
-claude-review.sh start packet.md [state] [label]
-claude-review.sh start-background packet.md [state] [label]
+claude-review.sh start REVIEW_INPUT [state] [label]
+claude-review.sh start-background REVIEW_INPUT [state] [label]
 claude-review.sh status state
 claude-review.sh collect state
 claude-review.sh retry state
@@ -107,3 +109,10 @@ claude-panel.sh advance output
 claude-panel.sh collect output
 claude-panel.sh followup output/role delta.md
 ```
+
+`REVIEW_INPUT` may be the legacy packet file or a directory containing the
+required `review-packet.md` and optional `review-prompt.md` (`prompt.md` is a
+compatibility alias). The wrapper copies the bundle into a newly-created,
+empty state directory. Do not pre-populate the state directory; its contents
+are protected review state, not input staging. Bundle members must be
+non-empty regular files and must not be symlinks.
