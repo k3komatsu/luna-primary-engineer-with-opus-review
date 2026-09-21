@@ -23,8 +23,10 @@ consumes Claude usage.
 
 A real Opus call from a network-restricted Codex sandbox may require explicit
 escalation to network-enabled command execution before launch.
-If status reports process liveness as unknown, ps was denied; escalate
-execution permission and rerun status without changing the review state.
+If status reports process liveness as permission_denied, ps was denied;
+escalate execution permission and rerun status without changing the review
+state. A different unknown value means process-list inspection failed for an
+other reason and also must not trigger a relaunch.
 TXT
 }
 
@@ -256,9 +258,11 @@ case "$MODE" in
         cp -- "$D/result.txt" "$D/initial-result.txt"
       else
         code=$?; (( FAIL == 0 )) && FAIL="$code"
-        if [[ "$(cat "$D/stage" 2>/dev/null || true)" == blocked && "$(cat "$D/blocked_reason" 2>/dev/null || true)" == network ]]; then
-          break
-        fi
+        if [[ -f "$D/failure_reason" ]]; then cp -- "$D/failure_reason" "$OUTPUT/failure_reason"; fi
+        if [[ -f "$D/user_confirmation_required" ]]; then cp -- "$D/user_confirmation_required" "$OUTPUT/user_confirmation_required"; fi
+        # Do not spend another independent panel turn after any technical
+        # failure; inspect the failed role and require an explicit rerun.
+        break
       fi
     done < "$OUTPUT/role-names.txt"
     if (( FAIL != 0 )); then printf 'failed\n' > "$OUTPUT/stage"; exit "$FAIL"; fi

@@ -67,8 +67,8 @@ always requires explicit user approval.
 
 Once `claude-review.sh start`, `resume`, `retry`, `dual-start`,
 `dual-advance`, or a panel operation has launched Claude, that operation owns
-the review until its state reaches a terminal stage. While it is running or
-unknown:
+the review until its state reaches a terminal stage. While it is running,
+unknown, or process-list access is `permission_denied`:
 
 - never invoke `luna_reviewer`;
 - never create `state2`, fork, retry, resume, or launch a duplicate;
@@ -113,10 +113,11 @@ non-terminal and no adopted result exists, it records
 `failure_reason=process_gone_without_result`, reports
 `USER_CONFIRMATION_REQUIRED=1`, and returns the normal failed-state status.
 Ask the user whether to run Opus again; never relaunch automatically.
-If PID liveness is `unknown` or
-`PROCESS_LIST_PERMISSION_REQUIRED=1`, `ps` was rejected by the sandbox. Do not
-change state or relaunch. Request execution-permission escalation and rerun
-`status` with system process-list access.
+If PID liveness is `permission_denied`, `ps` was rejected by the sandbox. Do
+not change state or relaunch. Request execution-permission escalation and
+rerun `status` with system process-list access. A different `unknown` value
+means process-list inspection failed for another reason; treat it as
+inconclusive in the same way.
 
 `dual-start`, `dual-advance`, and panel operations remain sequential foreground
 calls. The panel and dual paths use the same result-file and workspace rules.
@@ -139,6 +140,28 @@ safety rules, the designated result path, and the result contract cannot be
 overridden by it. Bundle members must be non-empty regular files and must not
 be symlinks. The state directory must still be empty before `start`, so do not
 pre-populate it manually.
+
+Write `review-prompt.md` freely for focus, priorities, and questions. Do not
+maintain a separate output-format template there: the wrapper supplies
+`references/claude/review-output-template.txt` on every ordinary review,
+retry, re-review, and dual reviewer turn. Its headings are also used for result
+validation. A useful optional prompt shape is:
+
+```text
+Focus: ...
+Priority checks: ...
+Questions: ...
+```
+
+Add or omit fields as the review needs. If Claude returns review text in
+another format, `status` reports
+`FAILURE_REASON=review_returned_invalid_format`, `REVIEW_RESULT_PRESENT=1`,
+`REVIEW_FORMAT_VALID=0`, and `RAW_REVIEW_RESULT_PATH`. Inspect that original
+text with `scripts/claude-job.sh logs STATE_DIR raw-result`; report substantive
+findings without treating it as an adopted verdict. Do not automatically call
+Opus again. After user approval, rerun the initial review with `start` in a
+new state using the same packet bundle. A new Opus call after this technical
+failure needs user approval.
 
 ## Review workspace and state
 
@@ -195,20 +218,18 @@ that validated frame into the designated file itself, and then treats the
 file—not raw stdout—as the canonical result. `LUNA_PRIMARY_ENGINEER_CLAUDE_RESULT_HANDOFF=stdout`
 can force this conservative mode for testing or compatibility.
 
-For an ordinary review and re-review, the designated file must contain all of:
-
-```text
-VERDICT: PASS | CHANGES_REQUIRED | PASS_WITH_RISK
-BLOCKERS:
-NONBLOCKING:
-TEST_GAPS:
-PREVIOUS_FINDINGS:
-```
+For an ordinary review and re-review, the designated file must follow
+`references/claude/review-output-template.txt`: choose one verdict and emit
+each template heading exactly once, in order, at the start of a line. Do not
+start another line with a contract heading outside a code fence. Content under
+the headings remains free-form.
 
 After Claude exits, the wrapper checks that the designated file exists, is
-non-empty, and contains every heading. Only then is it copied to the state
-`result.txt`. stdout and stderr are retained separately as diagnostics and are
-never used as the result source. A missing, empty, or incomplete result is a
+non-empty, and follows the template's order, verdict values, and heading
+placement. Only a conforming result is adopted as `result.txt`. The raw
+artifact is retained in the attempt directory. stdout and stderr are retained
+separately as diagnostics and are never used as the result source. A missing,
+empty, or incomplete result is a
 technical `failed` state with state, exit code, stdout, and stderr paths shown;
 it never triggers an automatic re-review.
 
@@ -230,9 +251,11 @@ The initial ordinary call stores an explicit UUID session ID. `resume` uses
 `--resume` with that same ID and passes the original packet, previous result,
 and fix delta as explicit context. `retry` is only an explicitly requested
 retry of an initial network-blocked call and reuses the same session; it does
-not create `state2`. A CLI validation error or `No conversation found` is not
-a network block and is terminal until the caller explicitly starts a new
-review. Re-review findings must be closed or kept open in
+not create `state2`. A CLI validation error is terminal. If Claude reports
+`No conversation found`, the wrapper records
+`failure_reason=claude_session_not_found` and requires explicit confirmation
+before a new Opus review; it is not a network block. Re-review findings must
+be closed or kept open in
 `PREVIOUS_FINDINGS`.
 
 The wrapper defaults API, stream-idle, byte-idle, and first-byte timeouts to
@@ -255,7 +278,10 @@ bash scripts/claude-review.sh dual-collect GROUP_DIR
 
 `dual-start` stores a neutral `SEED_READY` artifact. `dual-advance` then runs
 two independent, non-persistent reviewers sequentially. Neither reviewer
-reads the other's result before completing its own contract.
+reads the other's result before completing its own contract. If the first
+reviewer has a technical failure, including an invalid output format, the
+second reviewer is not launched; inspect the group state and obtain approval
+before starting another dual group.
 
 ## Opus advisory panel
 

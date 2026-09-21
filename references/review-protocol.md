@@ -34,8 +34,10 @@ network-enabled command execution. `resume` continues the Claude session
 created by `start` in a new foreground turn. The fix delta is supplied as the
 new user turn, while the original packet and previous review remain in the
 conversation context. CLI permission errors and `No conversation found` are
-terminal technical failures, not retryable network states. The wrapper
-validates the designated result file and never retries because stdout is empty.
+terminal technical failures, not retryable network states; the latter is
+recorded as `failure_reason=claude_session_not_found`. The wrapper
+validates the designated result file and refuses both resume forms with exit
+code 10 for a known-lost session; it never retries because stdout is empty.
 
 An ordinary fix re-review does not need additional user approval when the
 finding is important, the fix is broad, or regression risk is high. Skip it
@@ -61,7 +63,10 @@ claude-review.sh dual-collect GROUP_DIR
 ```
 
 The two reviewers run sequentially and independently. Neither reads the other
-reviewer's result before completing its own analysis.
+reviewer's result before completing its own analysis. If reviewer one has a
+technical failure, including an invalid output format, the wrapper stops before
+launching reviewer two and requires inspection/approval before another dual
+run.
 
 ## Review input
 
@@ -80,7 +85,10 @@ together with `review-prompt.md`. The wrapper copies both files into the fresh
 state directory and stores `prompt_path`; a pre-populated state directory is
 still rejected so old review data cannot be overwritten. Bundle members must
 be non-empty regular files and must not be symlinks. The prompt is context
-only: wrapper safety rules and the result contract take precedence.
+only: wrapper safety rules and the result contract take precedence. It may
+freely specify the review focus, priorities, and questions. The wrapper adds
+the canonical output template to every ordinary review turn, including retry,
+re-review, and both dual reviewers; the prompt need not duplicate it.
 
 Provide:
 
@@ -95,21 +103,18 @@ Known compromises / open concerns:
 
 ## Reviewer output contract
 
-```text
-VERDICT: PASS | CHANGES_REQUIRED | PASS_WITH_RISK
-
-BLOCKERS:
-- severity, location, failure scenario, required correction
-
-NONBLOCKING:
-- only materially useful items
-
-TEST_GAPS:
-- missing verification that could expose a real defect
-
-PREVIOUS_FINDINGS:
-- OPEN/CLOSED on re-review turns
-```
+The canonical heading and verdict template is
+[`claude/review-output-template.txt`](claude/review-output-template.txt). The
+wrapper sends it to Claude and derives its heading checks from that same file.
+Describe blockers with severity, location, failure scenario, and needed
+correction; keep nonblocking items materially useful; identify meaningful test
+gaps; and mark previous findings OPEN/CLOSED on re-review. The content beneath
+each heading can use any useful structure. A review returned in another
+format fails validation. `status` marks the returned text as present and the
+format as invalid, and `claude-job.sh logs STATE_DIR raw-result` exposes the
+original artifact for inspection. Report useful findings from that text while
+making clear that no verdict was adopted; do not launch another Opus call
+without approval.
 
 Reviewers do not implement fixes. Luna synthesizes evidence rather than
 counting votes.

@@ -71,9 +71,10 @@ resume the same session and fix delta when a lost re-review remains resumable,
 or start a fresh group for dual/panel work.
 
 If `ps` is denied by the sandbox, `RUNNER_ALIVE` or `CLAUDE_ALIVE` is
-`unknown` and `PROCESS_LIST_PERMISSION_REQUIRED=1`. This means process-list
-inspection needs execution-permission escalation. Do not infer process loss,
-change state, or relaunch; obtain escalation and rerun `status`.
+`permission_denied` and `PROCESS_LIST_PERMISSION_REQUIRED=1`. A different
+`unknown` value means another process-list error. Either value means process
+inspection is inconclusive: do not infer process loss, change state, or
+relaunch; obtain execution-permission escalation and rerun `status`.
 
 An empty stdout stream is harmless when the designated file is complete. A
 missing, empty, or incomplete designated file is a technical failure and its
@@ -81,8 +82,10 @@ stdout/stderr diagnostics are reported. It is never an automatic retry
 condition. A network-blocked state is retried only by an explicit user-approved
 `retry` or `resume` using the same ordinary session. CLI validation errors,
 unsupported permission rules, and `No conversation found` are not network
-blocks even if stdout also contains `Request timed out`; they remain terminal
-and must not cause a new session to be created automatically. Ordinary
+blocks even if stdout also contains `Request timed out`; the latter is recorded
+as `failure_reason=claude_session_not_found`. They remain terminal and must
+not cause a new session to be created automatically; `resume` and
+`resume-background` refuse such a state with exit code 10. Ordinary
 same-session re-review after fixes is the only re-review that may proceed
 without another user approval, and only under the three-axis rule in the
 review protocol.

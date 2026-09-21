@@ -5,6 +5,7 @@ Luna Primary Engineer v6.8.0
 - Review input: legacy packet file or bundle directory with review-packet.md plus optional review-prompt.md copied into fresh state
 - Result handoff: designated absolute result file -> contract validation -> adopted result.txt; stdout/stderr are separate diagnostics
 - Ordinary contract: VERDICT, BLOCKERS, NONBLOCKING, TEST_GAPS, PREVIOUS_FINDINGS
+- Ordinary review format: one shared template supplies Claude prompts and heading validation; an invalid returned format is reported with its raw result path without restricting review focus
 - Re-review: same-session resume without extra approval when finding importance, fix scope, or regression risk is high; skip only when all three are low
 - Workspace: current Git worktree tmp/luna-primary-engineer/reviews/<unique-id>; no system temporary directories or symlinked review roots
 - Lifecycle: foreground start/resume; explicit wrapper background/status forms; runner/Claude PID tracking; launched Opus processes are never terminated

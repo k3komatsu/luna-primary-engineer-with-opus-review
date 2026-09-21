@@ -356,32 +356,84 @@ luna_primary_engineer_adopt_result() {
   cp -- "$source" "$destination"
 }
 
+luna_primary_engineer_review_output_template() {
+  cat "${BASH_SOURCE[0]%/*}/../references/claude/review-output-template.txt"
+}
+
 luna_primary_engineer_review_contract_complete() {
-  local file="$1" heading
+  local file="$1" template="${BASH_SOURCE[0]%/*}/../references/claude/review-output-template.txt"
   [[ -f "$file" && -s "$file" ]] || return 1
-  for heading in VERDICT BLOCKERS NONBLOCKING TEST_GAPS PREVIOUS_FINDINGS; do
-    grep -Eq "^${heading}:" "$file" || return 1
-  done
+  [[ -s "$template" ]] || return 1
+  awk '
+    FNR == NR {
+      split($0, part, ":")
+      heading[++count] = part[1]
+      if (count == 1) {
+        allowed = substr($0, length(part[1]) + 2)
+        option_count = split(allowed, option, "|")
+        for (j = 1; j <= option_count; j++) {
+          gsub(/^[[:space:]]+|[[:space:]]+$/, "", option[j])
+        }
+      }
+      next
+    }
+    /^```/ { fenced = !fenced; next }
+    !fenced {
+      for (i = 1; i <= count; i++) {
+        prefix = heading[i] ":"
+        if (index($0, prefix) != 1) continue
+        if (i != found + 1) invalid = 1
+        else {
+          if (i == 1) {
+            value = substr($0, length(prefix) + 1)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+            valid_verdict = 0
+            for (j = 1; j <= option_count; j++) {
+              if (value == option[j]) valid_verdict = 1
+            }
+            if (!valid_verdict) invalid = 1
+          }
+          found++
+        }
+        break
+      }
+    }
+    END { if (count < 1 || heading[1] != "VERDICT" || found != count || invalid) exit 1 }
+  ' "$template" "$file"
 }
 
 luna_primary_engineer_review_network_failure() {
-  local file
+  local stdout_file="${1:-}" stderr_file="${2:-}" file
   # A CLI validation/configuration error takes precedence even if stdout also
   # contains a generic "Request timed out" message. Such a process never
   # reached a resumable Claude conversation and must not be retried as network.
-  for file in "$@"; do
+  if luna_primary_engineer_review_session_not_found "$stderr_file"; then
+    return 1
+  fi
+  for file in "$stdout_file" "$stderr_file"; do
     [[ -f "$file" ]] || continue
     if grep -Eiq \
-      'Permission (allow|deny) rule|unknown tool|check for typos|unknown option|invalid option|No conversation found' \
+      'Permission (allow|deny) rule|unknown tool|check for typos|unknown option|invalid option' \
       "$file"; then
       return 1
     fi
   done
-  for file in "$@"; do
+  for file in "$stdout_file" "$stderr_file"; do
     [[ -f "$file" ]] || continue
     if grep -Eiq \
       'Request timed out|api\.anthropic\.com|NODE_EXTRA_CA_CERTS|proxy[^[:space:]]*[[:space:]]+intercept|ECONNRESET|ETIMEDOUT|ENETUNREACH|EAI_AGAIN' \
       "$file"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+luna_primary_engineer_review_session_not_found() {
+  local file
+  for file in "$@"; do
+    [[ -f "$file" ]] || continue
+    if grep -Eiq 'No conversation found with session ID|conversation[^[:cntrl:]]*not found' "$file"; then
       return 0
     fi
   done
@@ -398,7 +450,7 @@ luna_primary_engineer_process_state() {
     ps_rc=$?
   fi
   if grep -Eiq 'operation not permitted|not permitted|permission denied|not authorized' <<< "$output"; then
-    printf 'unknown\n'
+    printf 'permission_denied\n'
   elif (( ps_rc == 1 )); then
     printf 'dead\n'
   else
@@ -480,6 +532,7 @@ luna_primary_engineer_print_state_dir() {
   local state_dir="$1" stage rc reason background_pid background_kind monitor_dir current_round attempt_dir
   local runner_pid claude_pid runner_state claude_state runner_alive claude_alive
   local dead_state=dead tracking=0 result_ready=0 confirmation process_list_permission_required=0
+  local failure_reason raw_result_file review_result_present=0 review_format_valid=unknown
   [[ -d "$state_dir" ]] || { echo "ERROR: missing state directory: $state_dir" >&2; return 2; }
   stage="$(cat "$state_dir/stage" 2>/dev/null || printf 'unknown')"
   rc="$(cat "$state_dir/run_exit_code" 2>/dev/null || printf '')"
@@ -508,9 +561,11 @@ luna_primary_engineer_print_state_dir() {
   if [[ -n "$runner_pid" || -n "$claude_pid" ]]; then tracking=1; fi
   runner_state="$(luna_primary_engineer_process_state "$runner_pid")"
   claude_state="$(luna_primary_engineer_process_state "$claude_pid")"
-  case "$runner_state" in alive) runner_alive=1 ;; dead) runner_alive=0 ;; *) runner_alive=unknown ;; esac
-  case "$claude_state" in alive) claude_alive=1 ;; dead) claude_alive=0 ;; *) claude_alive=unknown ;; esac
-  if [[ "$runner_state" == unknown || "$claude_state" == unknown ]]; then process_list_permission_required=1; fi
+  case "$runner_state" in alive) runner_alive=1 ;; dead) runner_alive=0 ;; permission_denied) runner_alive=permission_denied ;; *) runner_alive=unknown ;; esac
+  case "$claude_state" in alive) claude_alive=1 ;; dead) claude_alive=0 ;; permission_denied) claude_alive=permission_denied ;; *) claude_alive=unknown ;; esac
+  if [[ "$runner_state" == unknown || "$runner_state" == permission_denied || "$claude_state" == unknown || "$claude_state" == permission_denied ]]; then
+    process_list_permission_required=1
+  fi
   if [[ -s "$monitor_dir/result.txt" ]]; then result_ready=1; fi
   if [[ "$stage" == queued && "$background_kind" == resume ]]; then result_ready=0; fi
 
@@ -525,8 +580,25 @@ luna_primary_engineer_print_state_dir() {
   fi
 
   confirmation="$(cat "$state_dir/user_confirmation_required" 2>/dev/null || printf '0')"
+  failure_reason="$(cat "$state_dir/failure_reason" 2>/dev/null || printf '')"
+  raw_result_file=""
+  if [[ -n "$attempt_dir" ]]; then
+    raw_result_file="$attempt_dir/reviewer-result.md"
+    if [[ -s "$raw_result_file" ]]; then
+      review_result_present=1
+      if luna_primary_engineer_review_contract_complete "$raw_result_file"; then
+        review_format_valid=1
+      else
+        review_format_valid=0
+      fi
+    fi
+  fi
   printf 'STATE=%s\nEXIT_CODE=%s\nBLOCKED_REASON=%s\nFAILURE_REASON=%s\nUSER_CONFIRMATION_REQUIRED=%s\n' \
-    "$stage" "$rc" "$reason" "$(cat "$state_dir/failure_reason" 2>/dev/null || printf '')" "$confirmation"
+    "$stage" "$rc" "$reason" "$failure_reason" "$confirmation"
+  if [[ "$failure_reason" == review_returned_invalid_format ]]; then
+    printf 'REVIEW_RESULT_PRESENT=%s\nREVIEW_FORMAT_VALID=%s\nRAW_REVIEW_RESULT_PATH=%s\n' \
+      "$review_result_present" "$review_format_valid" "$raw_result_file"
+  fi
   printf 'BACKGROUND_PID=%s\nRUNNER_PID=%s\nRUNNER_ALIVE=%s\nCLAUDE_PID=%s\nCLAUDE_ALIVE=%s\nPROCESS_LIST_PERMISSION_REQUIRED=%s\nSTATE_DIR=%s\n' \
     "$background_pid" "$runner_pid" "$runner_alive" "$claude_pid" "$claude_alive" "$process_list_permission_required" "$state_dir"
   case "$stage" in

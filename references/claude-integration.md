@@ -22,10 +22,11 @@ launched Opus process. `status` uses the system process list without signals;
 when both PIDs are gone, the state is still non-terminal, and no adopted result
 exists, it records `process_gone_without_result` and requires explicit user
 confirmation before another Opus call.
-If sandbox policy denies `ps`, liveness is reported as `unknown` with
-`PROCESS_LIST_PERMISSION_REQUIRED=1`, and no failure transition occurs. Treat
-that output as an instruction to obtain execution-permission escalation and
-rerun `status` with process-list access.
+If sandbox policy denies `ps`, liveness is reported as `permission_denied` with
+`PROCESS_LIST_PERMISSION_REQUIRED=1`, and no failure transition occurs. A
+different `unknown` value means another process-list error. Treat either
+output as an instruction to obtain execution-permission escalation and rerun
+`status` with process-list access.
 
 Review input can be the legacy packet file or a directory containing
 `review-packet.md` and an optional `review-prompt.md` (`prompt.md` is accepted
@@ -33,7 +34,8 @@ as an alias). The wrapper copies these inputs into the fresh state directory
 and passes paths to Claude. A pre-populated state directory is rejected to
 protect existing review data; the prompt is context only and cannot override
 the wrapper's safety or result-contract instructions. Bundle members must be
-non-empty regular files and must not be symlinks.
+non-empty regular files and must not be symlinks. The prompt can choose review
+focus, priorities, and questions without maintaining a separate output format.
 
 ## Read-only boundary and result handoff
 
@@ -82,15 +84,16 @@ repository-after.txt
 ```
 
 Only a non-empty designated file that passes the artifact contract is adopted
-as the state `result.txt`. For an ordinary review the contract is:
-
-```text
-VERDICT: PASS | CHANGES_REQUIRED | PASS_WITH_RISK
-BLOCKERS:
-NONBLOCKING:
-TEST_GAPS:
-PREVIOUS_FINDINGS:
-```
+as the state `result.txt`. Ordinary review turns use the shared
+[`claude/review-output-template.txt`](claude/review-output-template.txt) for
+both Claude instructions and heading validation. A response in another format
+remains available as the raw attempt artifact but is not adopted.
+`status` exposes `REVIEW_RESULT_PRESENT=1`, `REVIEW_FORMAT_VALID=0`, and
+`RAW_REVIEW_RESULT_PATH` when review text exists but its format is invalid.
+Use `claude-job.sh logs STATE_DIR raw-result` to inspect its findings without
+spending another Opus turn; body content remains free-form. For an invalid
+initial review, obtain approval and use `start` with a new state; `retry` is
+reserved for an explicitly network-blocked initial review.
 
 An absent, empty, or incomplete result is a technical `failed` state. The
 error includes the state, exit code, and stdout/stderr diagnostic paths. Raw
@@ -114,8 +117,10 @@ environment can reach the Anthropic API. A recognizable transport failure is
 stored as `stage=blocked` with `blocked_reason=network`; the session and
 diagnostics remain available for an explicitly approved `retry` on the same
 state. CLI permission/argument errors and `No conversation found` take
-precedence over generic timeout text and are terminal until the user chooses
-a next step.
+precedence over generic timeout text. The latter is stored as
+`failure_reason=claude_session_not_found`; both are terminal until the user
+chooses a next step. `resume` and `resume-background` refuse a known-lost
+session with exit code 10, so the approved recovery is a new `start`.
 
 In a network-restricted Codex sandbox, real Opus calls may require escalating
 the command to network-enabled execution. Obtain that authorization before

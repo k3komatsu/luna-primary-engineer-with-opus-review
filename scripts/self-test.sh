@@ -18,6 +18,7 @@ CONTRACT_LINES=(
   'PREVIOUS_FINDINGS:'
 )
 CONTRACT_TEXT=$'VERDICT: PASS\nBLOCKERS:\nNONBLOCKING:\nTEST_GAPS:\nPREVIOUS_FINDINGS:'
+MARKDOWN_CONTRACT_TEXT=$'## VERDICT\nPASS\n## BLOCKERS\nNone\n## NONBLOCKING\nNone\n## TEST_GAPS\nNone\n## PREVIOUS_FINDINGS\nNone'
 
 printf '%s\n' "${CONTRACT_LINES[@]}" > "$COMMON_STATE/contract.txt"
 luna_primary_engineer_review_contract_complete "$COMMON_STATE/contract.txt"
@@ -36,6 +37,41 @@ if luna_primary_engineer_review_contract_complete "$COMMON_STATE/contract.txt"; 
   echo "FAIL: incomplete contract was accepted" >&2
   exit 1
 fi
+
+printf '%s\n' 'VERDICT: MAYBE' 'BLOCKERS:' 'NONBLOCKING:' 'TEST_GAPS:' 'PREVIOUS_FINDINGS:' > "$COMMON_STATE/contract.txt"
+if luna_primary_engineer_review_contract_complete "$COMMON_STATE/contract.txt"; then
+  echo "FAIL: a verdict outside the shared template was accepted" >&2
+  exit 1
+fi
+printf '%s\n' 'VERDICT: PASS' 'NONBLOCKING:' 'BLOCKERS:' 'TEST_GAPS:' 'PREVIOUS_FINDINGS:' > "$COMMON_STATE/contract.txt"
+if luna_primary_engineer_review_contract_complete "$COMMON_STATE/contract.txt"; then
+  echo "FAIL: out-of-order sections were accepted" >&2
+  exit 1
+fi
+printf '%s\n' '```text' "$CONTRACT_TEXT" '```' '## VERDICT' 'PASS' > "$COMMON_STATE/contract.txt"
+if luna_primary_engineer_review_contract_complete "$COMMON_STATE/contract.txt"; then
+  echo "FAIL: a contract quoted inside a code fence was accepted" >&2
+  exit 1
+fi
+printf '%s\n' "$CONTRACT_TEXT" 'VERDICT: PASS' > "$COMMON_STATE/contract.txt"
+if luna_primary_engineer_review_contract_complete "$COMMON_STATE/contract.txt"; then
+  echo "FAIL: a repeated heading was accepted" >&2
+  exit 1
+fi
+printf '%s\n' \
+  'VERDICT: PASS' \
+  'BLOCKERS:' \
+  '- none' \
+  'NONBLOCKING:' \
+  '- code example follows' \
+  '```text' \
+  'BLOCKERS: this is quoted body text' \
+  '```' \
+  'TEST_GAPS:' \
+  '- none' \
+  'PREVIOUS_FINDINGS:' \
+  '- none' > "$COMMON_STATE/contract.txt"
+luna_primary_engineer_review_contract_complete "$COMMON_STATE/contract.txt"
 
 luna_primary_engineer_require_fresh_state_dir "$SMOKE_DIR"
 touch "$SMOKE_DIR/result.txt"
@@ -104,6 +140,7 @@ claude() {
     return 1
   fi
   if [[ "${MOCK_NETWORK_FAIL:-0}" == 1 ]]; then
+    printf '%s\n' 'Reviewer note: No conversation found with session ID: decoy is not a transport error.'
     printf '%s\n' 'Request timed out' >&2
     return 1
   fi
@@ -116,6 +153,8 @@ claude() {
     fi
     if [[ "${MOCK_INCOMPLETE:-0}" == 1 ]]; then
       printf '%s\n' 'VERDICT: PASS'
+    elif [[ "${MOCK_MARKDOWN_RESULT:-0}" == 1 ]]; then
+      printf '%s\n' "$MARKDOWN_CONTRACT_TEXT"
     else
       printf '%s\n' "$CONTRACT_TEXT"
     fi
@@ -134,7 +173,11 @@ claude() {
   if printf '%s\n' "$@" | grep -Fq 'Write exactly SEED_READY'; then
     printf 'SEED_READY\n' > "$LUNA_PRIMARY_ENGINEER_REVIEW_RESULT_PATH"
   else
-    printf '%s\n' "$CONTRACT_TEXT" > "$LUNA_PRIMARY_ENGINEER_REVIEW_RESULT_PATH"
+    if [[ "${MOCK_MARKDOWN_RESULT:-0}" == 1 ]]; then
+      printf '%s\n' "$MARKDOWN_CONTRACT_TEXT" > "$LUNA_PRIMARY_ENGINEER_REVIEW_RESULT_PATH"
+    else
+      printf '%s\n' "$CONTRACT_TEXT" > "$LUNA_PRIMARY_ENGINEER_REVIEW_RESULT_PATH"
+    fi
   fi
 }
 
@@ -168,6 +211,7 @@ MOCK_NETWORK_FAIL=0
 MOCK_MISSING_RESULT=0
 MOCK_EMPTY_RESULT=0
 MOCK_INCOMPLETE=0
+MOCK_MARKDOWN_RESULT=0
 MOCK_STDOUT_CONTRACT=0
 MOCK_PERMISSION_FAIL=0
 MOCK_NO_CONVERSATION_FAIL=0
@@ -177,7 +221,7 @@ MOCK_PS_DENIED=0
 MOCK_PS_UNKNOWN=0
 MOCK_TRUNCATED=0
 MOCK_ALIVE_PIDS=""
-export MOCK_LOG MOCK_FAIL MOCK_NETWORK_FAIL MOCK_MISSING_RESULT MOCK_EMPTY_RESULT MOCK_INCOMPLETE MOCK_STDOUT_CONTRACT MOCK_PERMISSION_FAIL MOCK_NO_CONVERSATION_FAIL MOCK_STRICT_CLI MOCK_DELAY MOCK_PS_DENIED MOCK_PS_UNKNOWN MOCK_TRUNCATED MOCK_ALIVE_PIDS CONTRACT_TEXT
+export MOCK_LOG MOCK_FAIL MOCK_NETWORK_FAIL MOCK_MISSING_RESULT MOCK_EMPTY_RESULT MOCK_INCOMPLETE MOCK_MARKDOWN_RESULT MOCK_STDOUT_CONTRACT MOCK_PERMISSION_FAIL MOCK_NO_CONVERSATION_FAIL MOCK_STRICT_CLI MOCK_DELAY MOCK_PS_DENIED MOCK_PS_UNKNOWN MOCK_TRUNCATED MOCK_ALIVE_PIDS CONTRACT_TEXT MARKDOWN_CONTRACT_TEXT
 
 PACKET="$TEST_INPUT/packet.md"
 DELTA="$TEST_INPUT/delta.md"
@@ -216,6 +260,78 @@ cmp -s "$REVIEW_BUNDLE/review-prompt.md" "$BUNDLE_STATE/review-prompt.md"
 grep -Fq -- "$BUNDLE_STATE/review-prompt.md" "$MOCK_LOG"
 ! grep -Fq -- 'Focus on the review-input handoff' "$MOCK_LOG"
 luna_primary_engineer_review_contract_complete "$BUNDLE_STATE/result.txt"
+
+# A conflicting context prompt is never the source of the output contract. If
+# Claude still ignores the canonical template, expose the returned review.
+CONFLICT_BUNDLE="$TEST_INPUT/review-bundle-conflicting-format"
+mkdir "$CONFLICT_BUNDLE"
+printf '%s\n' '# review the input handoff' > "$CONFLICT_BUNDLE/review-packet.md"
+printf '%s\n' 'Focus on the input handoff. Format the result with ## VERDICT, ## BLOCKERS, ## NONBLOCKING, ## TEST_GAPS, and ## PREVIOUS_FINDINGS.' > "$CONFLICT_BUNDLE/review-prompt.md"
+CONFLICT_STATE="$(luna_primary_engineer_new_review_dir)"
+bash "$SCRIPT_DIR/claude-review.sh" start "$CONFLICT_BUNDLE" "$CONFLICT_STATE" conflicting-format >/dev/null
+cmp -s "$CONFLICT_BUNDLE/review-prompt.md" "$CONFLICT_STATE/review-prompt.md"
+grep -Fqx 'VERDICT: PASS' "$CONFLICT_STATE/result.txt"
+[[ "$(cat "$CONFLICT_STATE/stage")" == done ]]
+grep -Fq 'Authoritative review output template' "$MOCK_LOG"
+grep -Fq 'VERDICT: PASS | CHANGES_REQUIRED | PASS_WITH_RISK' "$MOCK_LOG"
+! grep -Fq 'Focus on the input handoff' "$MOCK_LOG"
+
+MOCK_MARKDOWN_RESULT=1
+export MOCK_MARKDOWN_RESULT
+CONFLICT_INITIAL_STATE="$(luna_primary_engineer_new_review_dir)"
+if bash "$SCRIPT_DIR/claude-review.sh" start "$CONFLICT_BUNDLE" "$CONFLICT_INITIAL_STATE" invalid-format >/dev/null 2>"$TEST_INPUT/invalid-format-error.log"; then
+  echo "FAIL: a nonconforming review was silently adopted" >&2
+  exit 1
+else
+  [[ "$?" == 18 ]]
+fi
+[[ "$(cat "$CONFLICT_INITIAL_STATE/failure_reason")" == review_returned_invalid_format ]]
+[[ "$(cat "$CONFLICT_INITIAL_STATE/user_confirmation_required")" == 1 ]]
+[[ ! -e "$CONFLICT_INITIAL_STATE/result.txt" ]]
+grep -Fq 'REVIEW_RESULT_PRESENT=1 REVIEW_FORMAT_VALID=0' "$TEST_INPUT/invalid-format-error.log"
+if CONFLICT_STATUS="$(bash "$SCRIPT_DIR/claude-review.sh" status "$CONFLICT_INITIAL_STATE")"; then
+  echo "FAIL: invalid-format state reported success" >&2
+  exit 1
+else
+  [[ "$?" == 12 ]]
+fi
+grep -Fq 'FAILURE_REASON=review_returned_invalid_format' <<< "$CONFLICT_STATUS"
+grep -Fq 'REVIEW_RESULT_PRESENT=1' <<< "$CONFLICT_STATUS"
+grep -Fq 'REVIEW_FORMAT_VALID=0' <<< "$CONFLICT_STATUS"
+grep -Fq "RAW_REVIEW_RESULT_PATH=$CONFLICT_INITIAL_STATE/attempt-1/reviewer-result.md" <<< "$CONFLICT_STATUS"
+bash "$SCRIPT_DIR/claude-job.sh" logs "$CONFLICT_INITIAL_STATE" raw-result > "$TEST_INPUT/raw-format-result.md"
+cmp -s "$TEST_INPUT/raw-format-result.md" "$CONFLICT_INITIAL_STATE/attempt-1/reviewer-result.md"
+printf '%s\n' 'Request timed out' > "$CONFLICT_INITIAL_STATE/attempt-1/stdout.txt"
+if bash "$SCRIPT_DIR/claude-review.sh" retry "$CONFLICT_INITIAL_STATE" >/dev/null 2>&1; then
+  echo "FAIL: invalid-format initial review was accepted by retry" >&2
+  exit 1
+else
+  [[ "$?" == 10 ]]
+fi
+if bash "$SCRIPT_DIR/claude-review.sh" resume "$CONFLICT_INITIAL_STATE" "$DELTA" >/dev/null 2>&1; then
+  echo "FAIL: invalid-format initial review was accepted by resume" >&2
+  exit 1
+else
+  [[ "$?" == 10 ]]
+fi
+
+if bash "$SCRIPT_DIR/claude-review.sh" resume "$CONFLICT_STATE" "$DELTA" >/dev/null 2>"$TEST_INPUT/rereview-format-error.log"; then
+  echo "FAIL: nonconforming re-review was silently adopted" >&2
+  exit 1
+else
+  [[ "$?" == 18 ]]
+fi
+[[ "$(cat "$CONFLICT_STATE/failure_reason")" == review_returned_invalid_format ]]
+[[ "$(cat "$CONFLICT_STATE/result.txt")" == "$CONTRACT_TEXT" ]]
+if CONFLICT_REREVIEW_STATUS="$(bash "$SCRIPT_DIR/claude-review.sh" status "$CONFLICT_STATE")"; then
+  echo "FAIL: invalid-format re-review state reported success" >&2
+  exit 1
+else
+  [[ "$?" == 12 ]]
+fi
+grep -Fq "RAW_REVIEW_RESULT_PATH=$CONFLICT_STATE/rereview-1/attempt-1/reviewer-result.md" <<< "$CONFLICT_REREVIEW_STATUS"
+MOCK_MARKDOWN_RESULT=0
+export MOCK_MARKDOWN_RESULT
 
 ALIAS_BUNDLE="$TEST_INPUT/review-bundle-alias"
 mkdir "$ALIAS_BUNDLE"
@@ -379,7 +495,7 @@ grep -Fq 'USER_CONFIRMATION_REQUIRED=1' <<< "$LOST_STATUS"
 grep -Fq 'RUNNER_ALIVE=0' <<< "$LOST_STATUS"
 grep -Fq 'CLAUDE_ALIVE=0' <<< "$LOST_STATUS"
 
-# Permission-denied process-list access is unknown, not proof of disappearance.
+# Permission-denied process-list access is explicit, not proof of disappearance.
 UNKNOWN_STATE="$(luna_primary_engineer_new_review_dir)"
 mkdir "$UNKNOWN_STATE/attempt-1"
 printf 'running\n' > "$UNKNOWN_STATE/stage"
@@ -398,8 +514,8 @@ MOCK_PS_DENIED=0
 export MOCK_PS_DENIED
 [[ "$UNKNOWN_RC" == 10 ]]
 [[ "$(cat "$UNKNOWN_STATE/stage")" == running ]]
-grep -Fq 'RUNNER_ALIVE=unknown' <<< "$UNKNOWN_STATUS"
-grep -Fq 'CLAUDE_ALIVE=unknown' <<< "$UNKNOWN_STATUS"
+grep -Fq 'RUNNER_ALIVE=permission_denied' <<< "$UNKNOWN_STATUS"
+grep -Fq 'CLAUDE_ALIVE=permission_denied' <<< "$UNKNOWN_STATUS"
 grep -Fq 'PROCESS_LIST_PERMISSION_REQUIRED=1' <<< "$UNKNOWN_STATUS"
 
 # Any other ps failure is also unknown, not proof that both processes died.
@@ -485,6 +601,19 @@ FALLBACK_STATE="$(luna_primary_engineer_new_review_dir)"
 export LUNA_PRIMARY_ENGINEER_CLAUDE_RESULT_HANDOFF=stdout
 bash "$SCRIPT_DIR/claude-review.sh" start "$PACKET" "$FALLBACK_STATE" smoke-framed >/dev/null
 luna_primary_engineer_review_contract_complete "$FALLBACK_STATE/result.txt"
+MOCK_MARKDOWN_RESULT=1
+export MOCK_MARKDOWN_RESULT
+FRAMED_MARKDOWN_STATE="$(luna_primary_engineer_new_review_dir)"
+if bash "$SCRIPT_DIR/claude-review.sh" start "$CONFLICT_BUNDLE" "$FRAMED_MARKDOWN_STATE" framed-markdown >/dev/null 2>&1; then
+  echo "FAIL: nonconforming framed review was silently adopted" >&2
+  exit 1
+else
+  [[ "$?" == 18 ]]
+fi
+grep -Fq '## VERDICT' "$FRAMED_MARKDOWN_STATE/attempt-1/reviewer-result.md"
+[[ "$(cat "$FRAMED_MARKDOWN_STATE/failure_reason")" == review_returned_invalid_format ]]
+MOCK_MARKDOWN_RESULT=0
+export MOCK_MARKDOWN_RESULT
 grep -Fq -- '--disallowedTools' "$MOCK_LOG"
 TRUNCATED_STATE="$(luna_primary_engineer_new_review_dir)"
 MOCK_TRUNCATED=1
@@ -498,7 +627,8 @@ fi
 MOCK_TRUNCATED=0
 export MOCK_TRUNCATED
 [[ "$TRUNCATED_RC" == 18 ]]
-[[ ! -s "$TRUNCATED_STATE/attempt-1/reviewer-result.md" ]]
+[[ -s "$TRUNCATED_STATE/attempt-1/reviewer-result.md" ]]
+[[ "$(cat "$TRUNCATED_STATE/failure_reason")" == review_returned_invalid_format ]]
 export LUNA_PRIMARY_ENGINEER_CLAUDE_RESULT_HANDOFF=file
 
 run_expected_invalid_result() {
@@ -577,8 +707,47 @@ if bash "$SCRIPT_DIR/claude-review.sh" retry "$NO_CONVERSATION_STATE" >/dev/null
   exit 1
 fi
 [[ "$(cat "$NO_CONVERSATION_STATE/stage")" == failed ]]
+[[ "$(cat "$NO_CONVERSATION_STATE/failure_reason")" == claude_session_not_found ]]
+[[ "$(cat "$NO_CONVERSATION_STATE/user_confirmation_required")" == 1 ]]
 MOCK_NO_CONVERSATION_FAIL=0
 export MOCK_NO_CONVERSATION_FAIL
+
+SESSION_LOSS_RESUME_STATE="$(luna_primary_engineer_new_review_dir)"
+bash "$SCRIPT_DIR/claude-review.sh" start "$PACKET" "$SESSION_LOSS_RESUME_STATE" smoke-session-loss >/dev/null
+MOCK_NO_CONVERSATION_FAIL=1
+export MOCK_NO_CONVERSATION_FAIL
+if bash "$SCRIPT_DIR/claude-review.sh" resume "$SESSION_LOSS_RESUME_STATE" "$DELTA" >/dev/null 2>&1; then
+  echo "FAIL: session-loss re-review unexpectedly succeeded" >&2
+  exit 1
+else
+  SESSION_LOSS_RC=$?
+fi
+[[ "$SESSION_LOSS_RC" == 1 ]]
+[[ "$(cat "$SESSION_LOSS_RESUME_STATE/stage")" == failed ]]
+[[ "$(cat "$SESSION_LOSS_RESUME_STATE/failure_reason")" == claude_session_not_found ]]
+[[ "$(cat "$SESSION_LOSS_RESUME_STATE/rereview-1/stage")" == failed ]]
+SESSION_LOSS_STATUS="$(bash "$SCRIPT_DIR/claude-review.sh" status "$SESSION_LOSS_RESUME_STATE" 2>&1 || true)"
+grep -Fq -- 'FAILURE_REASON=claude_session_not_found' <<< "$SESSION_LOSS_STATUS"
+if bash "$SCRIPT_DIR/claude-review.sh" resume "$SESSION_LOSS_RESUME_STATE" "$DELTA" >/dev/null 2>&1; then
+  echo "FAIL: known-lost Claude session was resumed" >&2
+  exit 1
+else
+  SESSION_LOSS_REASON_GUARD_RC=$?
+fi
+[[ "$SESSION_LOSS_REASON_GUARD_RC" == 10 ]]
+[[ ! -e "$SESSION_LOSS_RESUME_STATE/rereview-2" ]]
+printf '%s\n' 'claude_exited_without_valid_result' > "$SESSION_LOSS_RESUME_STATE/failure_reason"
+printf '%s\n' 'claude_exited_without_valid_result' > "$SESSION_LOSS_RESUME_STATE/rereview-1/failure_reason"
+MOCK_NO_CONVERSATION_FAIL=0
+export MOCK_NO_CONVERSATION_FAIL
+if bash "$SCRIPT_DIR/claude-review.sh" resume "$SESSION_LOSS_RESUME_STATE" "$DELTA" >/dev/null 2>&1; then
+  echo "FAIL: unavailable Claude session was resumed" >&2
+  exit 1
+else
+  SESSION_LOSS_GUARD_RC=$?
+fi
+[[ "$SESSION_LOSS_GUARD_RC" == 10 ]]
+[[ ! -e "$SESSION_LOSS_RESUME_STATE/rereview-2" ]]
 
 PERMISSION_STATE="$(luna_primary_engineer_new_review_dir)"
 MOCK_PERMISSION_FAIL=1
@@ -631,6 +800,26 @@ grep -Fq -- "$DUAL_GROUP/review-prompt.md" "$DUAL_REVIEW_LOG"
 MOCK_LOG="$SMOKE_DIR/claude-args.log"
 export MOCK_LOG
 bash "$SCRIPT_DIR/claude-review.sh" dual-collect "$DUAL_GROUP" >/dev/null
+
+DUAL_INVALID_GROUP="$(luna_primary_engineer_new_review_dir)"
+MOCK_MARKDOWN_RESULT=1
+export MOCK_MARKDOWN_RESULT
+bash "$SCRIPT_DIR/claude-review.sh" dual-start "$REVIEW_BUNDLE" "$DUAL_INVALID_GROUP" >/dev/null
+if bash "$SCRIPT_DIR/claude-review.sh" dual-advance "$DUAL_INVALID_GROUP" >/dev/null 2>&1; then
+  echo "FAIL: dual invalid-format review unexpectedly succeeded" >&2
+  exit 1
+else
+  DUAL_INVALID_RC=$?
+fi
+[[ "$DUAL_INVALID_RC" == 18 ]]
+[[ "$(cat "$DUAL_INVALID_GROUP/stage")" == failed ]]
+[[ "$(cat "$DUAL_INVALID_GROUP/failure_reason")" == review_returned_invalid_format ]]
+[[ "$(cat "$DUAL_INVALID_GROUP/user_confirmation_required")" == 1 ]]
+[[ "$(cat "$DUAL_INVALID_GROUP/reviewer-1/failure_reason")" == review_returned_invalid_format ]]
+[[ ! -e "$DUAL_INVALID_GROUP/reviewer-2/last_attempt" ]]
+MOCK_MARKDOWN_RESULT=0
+export MOCK_MARKDOWN_RESULT
+
 DUAL_NETWORK_GROUP="$(luna_primary_engineer_new_review_dir)"
 bash "$SCRIPT_DIR/claude-review.sh" dual-start "$PACKET" "$DUAL_NETWORK_GROUP" >/dev/null
 MOCK_NETWORK_FAIL=1
@@ -670,6 +859,24 @@ export MOCK_NETWORK_FAIL
 [[ "$PANEL_NETWORK_RC" == 11 ]]
 [[ -f "$PANEL_NETWORK_DIR/one/last_attempt" ]]
 [[ ! -e "$PANEL_NETWORK_DIR/two/last_attempt" ]]
+PANEL_FAILURE_DIR="$(luna_primary_engineer_new_review_dir)"
+bash "$SCRIPT_DIR/claude-panel.sh" start "$PANEL_CONTEXT" "$ROLES_DIR" "$PANEL_FAILURE_DIR" >/dev/null
+MOCK_FAIL=1
+export MOCK_FAIL
+if bash "$SCRIPT_DIR/claude-panel.sh" advance "$PANEL_FAILURE_DIR" >/dev/null 2>&1; then
+  echo "FAIL: panel technical failure unexpectedly succeeded" >&2
+  exit 1
+else
+  PANEL_FAILURE_RC=$?
+fi
+MOCK_FAIL=0
+export MOCK_FAIL
+[[ "$PANEL_FAILURE_RC" == 7 ]]
+[[ "$(cat "$PANEL_FAILURE_DIR/stage")" == failed ]]
+[[ "$(cat "$PANEL_FAILURE_DIR/failure_reason")" == claude_exited_without_valid_result ]]
+[[ "$(cat "$PANEL_FAILURE_DIR/user_confirmation_required")" == 1 ]]
+[[ -f "$PANEL_FAILURE_DIR/one/last_attempt" ]]
+[[ ! -e "$PANEL_FAILURE_DIR/two/last_attempt" ]]
 
 STATIC_TARGETS=(
   "$SCRIPT_DIR/claude-common.sh"
@@ -695,4 +902,4 @@ grep -Fq -- 'never invoke `luna_reviewer`' "$SCRIPT_DIR/../SKILL.md"
 
 grep -Fq 'allow_implicit_invocation: false' "$SCRIPT_DIR/../agents/openai.yaml"
 
-echo "PASS: designated-file result, PID state, process-loss confirmation, safe handoff, contract failures, sticky review, dual/panel recovery guards, implicit-invocation policy, and static guards"
+echo "PASS: designated-file result, shared review template, visible format mismatch and raw artifact, PID state, process-loss confirmation, safe handoff, sticky review, dual/panel recovery guards, implicit-invocation policy, and static guards"

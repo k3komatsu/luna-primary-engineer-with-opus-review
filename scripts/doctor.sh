@@ -18,6 +18,7 @@ check_file "$PRIVATE_PONYTAIL"
 for f in claude-common.sh claude-job.sh claude-review.sh claude-panel.sh self-test.sh; do
   check_file "${HOME}/.agents/skills/luna-primary-engineer/scripts/$f"
 done
+check_file "${HOME}/.agents/skills/luna-primary-engineer/references/claude/review-output-template.txt"
 RUNTIME_SCRIPTS=(
   "${HOME}/.agents/skills/luna-primary-engineer/scripts/claude-common.sh"
   "${HOME}/.agents/skills/luna-primary-engineer/scripts/claude-review.sh"

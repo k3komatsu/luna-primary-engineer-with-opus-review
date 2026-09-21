@@ -37,20 +37,15 @@ Review the supplied coherent change against its explicit requirements and invari
 
 Do not demand speculative abstractions or unrelated cleanup. Every blocker must identify a concrete failure mode or violated requirement and, when possible, a file/location.
 
-Be concise. End the turn with exactly these sections:
-VERDICT: PASS | CHANGES_REQUIRED | PASS_WITH_RISK
-BLOCKERS:
-NONBLOCKING:
-TEST_GAPS:
-PREVIOUS_FINDINGS:
+Be concise. Outside seed mode, use the authoritative review-output template
+appended by the wrapper to this system prompt. Choose one allowed verdict value
+from that template. Emit each section heading exactly once, in template order,
+at the start of a line; do not start any other line with one of those heading
+labels. The content beneath each heading may use whatever structure best
+explains the findings. Reviewer-specific context may refine scope and
+priorities but never replace the output headings.
 
 On a sticky re-review in this same conversation, close or keep open your previous findings based on the new delta/evidence. Do not invent new scope unless the fix introduced a regression or reveals a previously hidden blocker.
 
 The complete five-section contract must be written to the designated result
-file, even when stdout is empty:
-
-VERDICT:
-BLOCKERS:
-NONBLOCKING:
-TEST_GAPS:
-PREVIOUS_FINDINGS:
+file, even when stdout is empty.

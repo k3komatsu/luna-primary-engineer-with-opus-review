@@ -33,8 +33,10 @@ technical retries and duplicate reviews are never automatic.
 A real Opus call from a network-restricted Codex sandbox may require explicit
 escalation to network-enabled command execution before launch. Authentication
 success alone does not prove Anthropic API reachability from the sandbox.
-If status reports process liveness as unknown, ps was denied; escalate
-execution permission and rerun status without changing the review state.
+If status reports process liveness as permission_denied, ps was denied;
+escalate execution permission and rerun status without changing the review
+state. A different unknown value means process-list inspection failed for an
+other reason and also must not trigger a relaunch.
 
 REVIEW_INPUT may be a packet file (backward-compatible) or a bundle directory
 containing review-packet.md and an optional review-prompt.md (prompt.md is also
@@ -64,6 +66,10 @@ MODEL="${LUNA_PRIMARY_ENGINEER_CLAUDE_MODEL:-opus}"
 EFFORT="${LUNA_PRIMARY_ENGINEER_CLAUDE_REVIEW_EFFORT:-xhigh}"
 SYSTEM_PROMPT="$ROOT_DIR/references/claude/reviewer-system.md"
 SYSTEM_PROMPT_TEXT="$(cat "$SYSTEM_PROMPT")"
+SYSTEM_PROMPT_TEXT="$SYSTEM_PROMPT_TEXT
+
+Authoritative review output template (outside seed mode):
+$(luna_primary_engineer_review_output_template)"
 HANDOFF_MODE=""
 
 resolve_review_input() {
@@ -220,7 +226,7 @@ report_run_failure() {
 
 run_review() {
   local state_dir="$1" prompt="$2" add_dir="$3" result_kind="$4" review_cwd="$5" rc=0
-  local attempt_dir result_file stdout_file stderr_file exit_file before after
+  local attempt_dir result_file stdout_file stderr_file exit_file before after stdout_handoff_error=0
   shift 5
   attempt_dir="$(next_child_dir "$state_dir" attempt)"
   result_file="$attempt_dir/reviewer-result.md"
@@ -234,6 +240,16 @@ run_review() {
 
   before="$attempt_dir/repository-before.txt"
   after="$attempt_dir/repository-after.txt"
+  if [[ "$result_kind" == review ]]; then
+    prompt="$prompt
+
+Use this exact output template for the review result, regardless of any output
+format examples in the packet or reviewer-specific prompt. Choose one verdict.
+Emit each template heading exactly once, in this order, at the start of a line;
+do not start any other line with one of those heading labels. Free-form details
+are welcome beneath the headings:
+$(luna_primary_engineer_review_output_template)"
+  fi
   luna_primary_engineer_capture_repo_scope "$review_cwd" "$before"
   if run_foreground "$result_file" "$stdout_file" "$stderr_file" "$exit_file" "$add_dir" "$prompt" "$@"; then
     rc=0
@@ -241,7 +257,13 @@ run_review() {
     rc=$?
   fi
   if [[ "$HANDOFF_MODE" == stdout && ! -s "$result_file" ]]; then
-    luna_primary_engineer_materialize_stdout_result "$stdout_file" "$result_file" || true
+    if ! luna_primary_engineer_materialize_stdout_result "$stdout_file" "$result_file" && \
+      [[ "$result_kind" == review && -s "$stdout_file" ]]; then
+      # Preserve an unframed/nonconforming reviewer response as the raw result
+      # so the normal format-failure path can expose it to the agent.
+      cp -- "$stdout_file" "$result_file"
+      stdout_handoff_error=1
+    fi
   fi
   luna_primary_engineer_capture_repo_scope "$review_cwd" "$after"
   cp -- "$exit_file" "$state_dir/run_exit_code"
@@ -254,6 +276,13 @@ run_review() {
   fi
 
   if (( rc != 0 )); then
+    if luna_primary_engineer_review_session_not_found "$stderr_file"; then
+      printf 'failed\n' > "$state_dir/stage"
+      luna_primary_engineer_require_user_confirmation "$state_dir" claude_session_not_found
+      report_run_failure "$state_dir" "$attempt_dir" "$result_file" "$stdout_file" "$stderr_file" "$exit_file" "Claude session could not be resumed because the conversation was not found"
+      echo "ERROR: Claude session was not found; do not retry or fall back automatically. Start a new Opus review only after explicit user confirmation." >&2
+      return "$rc"
+    fi
     if luna_primary_engineer_review_network_failure "$stdout_file" "$stderr_file"; then
       printf 'blocked\n' > "$state_dir/stage"
       printf 'network\n' > "$state_dir/blocked_reason"
@@ -270,10 +299,16 @@ run_review() {
 
   case "$result_kind" in
     review)
-      if ! luna_primary_engineer_review_contract_complete "$result_file"; then
+      if (( stdout_handoff_error == 1 )) || ! luna_primary_engineer_review_contract_complete "$result_file"; then
         printf 'failed\n' > "$state_dir/stage"
-        luna_primary_engineer_require_user_confirmation "$state_dir" invalid_review_result
-        report_run_failure "$state_dir" "$attempt_dir" "$result_file" "$stdout_file" "$stderr_file" "$exit_file" "review contract is missing or incomplete"
+        if [[ -s "$result_file" ]]; then
+          luna_primary_engineer_require_user_confirmation "$state_dir" review_returned_invalid_format
+          echo "ERROR: REVIEW_RESULT_PRESENT=1 REVIEW_FORMAT_VALID=0 RAW_REVIEW_RESULT_PATH=$result_file" >&2
+          report_run_failure "$state_dir" "$attempt_dir" "$result_file" "$stdout_file" "$stderr_file" "$exit_file" "Claude returned review text, but its output format does not match the shared template"
+        else
+          luna_primary_engineer_require_user_confirmation "$state_dir" invalid_review_result
+          report_run_failure "$state_dir" "$attempt_dir" "$result_file" "$stdout_file" "$stderr_file" "$exit_file" "review contract is missing or incomplete"
+        fi
         return 18
       fi
       ;;
@@ -387,7 +422,7 @@ launch_background() {
         echo "ERROR: a background operation is already attached to this state: $state_dir" >&2
         return 15
         ;;
-      unknown)
+      permission_denied|unknown)
         echo "ERROR: cannot prove the existing background process is gone; ps was denied. Escalate execution permission and rerun status before relaunching: $state_dir" >&2
         return 15
         ;;
@@ -414,7 +449,10 @@ launch_background() {
 retry_initial_review() {
   local state_dir="$1" parent_stage session_id packet_abs prompt_abs review_cwd retry_dir n rc attempt_dir
   parent_stage="$(cat "$state_dir/stage" 2>/dev/null || true)"
-  if [[ "$parent_stage" == failed && ! -f "$state_dir/current_round" ]]; then
+  if [[ "$parent_stage" == failed && ! -f "$state_dir/current_round" && \
+    "$(cat "$state_dir/failure_reason" 2>/dev/null || true)" != review_returned_invalid_format && \
+    "$(cat "$state_dir/failure_reason" 2>/dev/null || true)" != claude_session_not_found && \
+    "$(cat "$state_dir/run_exit_code" 2>/dev/null || true)" != 0 ]]; then
     attempt_dir="$(luna_primary_engineer_latest_attempt_dir "$state_dir" 2>/dev/null || true)"
     if [[ -n "$attempt_dir" ]] && luna_primary_engineer_review_network_failure "$attempt_dir/stdout.txt" "$attempt_dir/stderr.txt"; then
       printf 'blocked\n' > "$state_dir/stage"
@@ -503,6 +541,18 @@ case "$MODE" in
     STATE_DIR="$(luna_primary_engineer_resolve_existing_review_dir "$1")" || exit $?
     DELTA="$2"
     [[ -f "$DELTA" ]] || { echo "ERROR: delta not found: $DELTA" >&2; exit 2; }
+    SESSION_LOSS_PARENT_STAGE="$(cat "$STATE_DIR/stage" 2>/dev/null || true)"
+    SESSION_LOSS_ROUND="$(cat "$STATE_DIR/current_round" 2>/dev/null || true)"
+    SESSION_LOSS_ATTEMPT=""
+    if [[ "$SESSION_LOSS_ROUND" == rereview-* ]]; then
+      SESSION_LOSS_ATTEMPT="$(luna_primary_engineer_latest_attempt_dir "$STATE_DIR/$SESSION_LOSS_ROUND" 2>/dev/null || true)"
+    fi
+    if [[ "$(cat "$STATE_DIR/failure_reason" 2>/dev/null || true)" == claude_session_not_found ]] || {
+      [[ "$SESSION_LOSS_PARENT_STAGE" == failed && -n "$SESSION_LOSS_ATTEMPT" ]] && luna_primary_engineer_review_session_not_found "$SESSION_LOSS_ATTEMPT/stderr.txt"
+    }; then
+      echo "ERROR: Claude session is not available for resume; start a new Opus review only after explicit user confirmation: $STATE_DIR" >&2
+      exit 10
+    fi
     if [[ "$MODE" == resume-background ]]; then
       launch_background "$STATE_DIR" resume resume "$STATE_DIR" "$DELTA"
       exit 0
@@ -676,9 +726,11 @@ case "$MODE" in
       else
         code=$?
         (( FAIL == 0 )) && FAIL="$code"
-        if [[ "$(cat "$D/stage" 2>/dev/null || true)" == blocked && "$(cat "$D/blocked_reason" 2>/dev/null || true)" == network ]]; then
-          break
-        fi
+        if [[ -f "$D/failure_reason" ]]; then cp -- "$D/failure_reason" "$GROUP/failure_reason"; fi
+        if [[ -f "$D/user_confirmation_required" ]]; then cp -- "$D/user_confirmation_required" "$GROUP/user_confirmation_required"; fi
+        # A technical failure, including invalid output format, must not spend
+        # another independent reviewer turn before the failure is inspected.
+        break
       fi
     done
     if (( FAIL != 0 )); then printf 'failed\n' > "$GROUP/stage"; exit "$FAIL"; fi
