@@ -2,7 +2,7 @@
 
 日本語 | [English](README.en.md)
 
-Codex Desktop / CLI向けのソフトウェア開発ワークフローです。GPT-5.6 Lunaを主担当にして、調査・実装・テストまで進めます。必要なときだけ、Claude CodeのOpusに変更を読み取り専用でレビューさせます。
+Codex Desktop / CLI向けのソフトウェア開発ワークフローです。GPT-6 Lunaを主担当にして、調査・実装・テストまで進めます。必要なときだけ、Claude CodeのOpus 5.5に変更を読み取り専用でレビューさせます。
 
 ## こんな人に向いています
 
@@ -15,7 +15,7 @@ Codex Desktop / CLI向けのソフトウェア開発ワークフローです。G
 
 この構成は、Codexを主な開発環境として使いながら、手元のClaude Team（Standard）も活用したいという実際の事情から始まりました。Codex Plusの利用枠は実装に集中させたかったのですが、Lunaで実装した内容のレビューをCodex内でTerraやSolに回すと、レビューだけでも5時間単位の利用枠を大きく消費します。
 
-そこで、調査・実装・テスト・統合はCodexのLunaに任せ、必要なときだけClaude CodeのOpusを独立した読み取り専用レビュアーとして使う構成にしました。Codexを中心に据えたまま、別モデルの視点も取り入れるのが、このワークフローの出発点です。
+そこで、調査・実装・テスト・統合はCodexのLunaに任せ、必要なときだけClaude CodeのOpus 5.5を独立した読み取り専用レビュアーとして使う構成にしました。Codexを中心に据えたまま、別モデルの視点も取り入れるのが、このワークフローの出発点です。
 
 ## セットアップ
 
@@ -24,7 +24,7 @@ Codex Desktop / CLI向けのソフトウェア開発ワークフローです。G
 - Codex DesktopまたはCodex CLI
 - Bash
 - Git（実装をシンプルに保つ補助スキルPonytailを自動取得する場合）
-- Claude Codeと有効な認証（Opusレビューを使う場合のみ）
+- Claude Codeと有効な認証（Opus 5.5レビューを使う場合のみ）
 
 Claude Codeは任意です。Claudeがなくても、Codex内のフォールバックレビュアーを使えます。
 
@@ -52,7 +52,7 @@ LUNA_PRIMARY_ENGINEER_PONYTAIL_SOURCE=/path/to/ponytail bash scripts/install.sh
 $luna-primary-engineer
 ```
 
-Codexの設定は、GPT-5.6 Luna / Reasoning: Max / Service tier: Fastを推奨します。
+Codexの設定は、GPT-6 Luna / Reasoning: Max / Service tier: Fastを推奨します。
 
 ### 更新
 
@@ -65,23 +65,25 @@ bash scripts/install.sh
 
 ## 仕組み
 
-普段の作業はCodexのLunaが担当します。大きな変更や判断が難しい変更では、Claude CodeのOpusを追加のレビュアーとして使えます。
+普段の作業はCodexのLunaが担当します。大きな変更や判断が難しい変更では、Claude CodeのOpus 5.5を追加のレビュアーとして使えます。
 
 ```text
 依頼
  ↓
 Codex / Luna
  ├─ 調査・計画・実装・テスト
- └─ 必要に応じてClaude Code / Opusのレビュー
+ └─ 必要に応じてClaude Code / Opus 5.5のレビュー
 ```
 
 Ponytailは、必要な変更だけに集中し、不要な抽象化や依存を増やさないための補助スキルです。
 
-## Opusによるレビュー
+## Opus 5.5によるレビュー
 
-実装に別モデルの意見が欲しいとき、Claude CodeのOpusが変更を読み取り専用でレビューします。実装の見落としや設計上の懸念を、Lunaとは別の視点から確認するための機能です。
+実装に別モデルの意見が欲しいとき、Claude CodeのOpus 5.5が変更を読み取り専用でレビューします。実装の見落としや設計上の懸念を、Lunaとは別の視点から確認するための機能です。
 
-通常はCodexセッションで「この変更をOpusにもレビューさせて」と依頼するだけで使えます。Claude Codeをレビュー開始前に利用できない場合は、Codex内のフォールバックレビュアーを使えます。Opusのレビュー開始後は、結果が返るまで別のレビュアーへ自動で切り替えません。
+通常はCodexセッションで「この変更をOpusにもレビューさせて」と依頼するだけで使えます。Claude Codeをレビュー開始前に利用できない場合は、Codex内のフォールバックレビュアーを使えます。Opus 5.5のレビュー開始後は、結果が返るまで別のレビュアーへ自動で切り替えません。
+
+レビューとパネルのラッパーは既定で`--model claude-opus-5-5`を明示指定します。`LUNA_PRIMARY_ENGINEER_CLAUDE_MODEL`を設定した場合だけ、意図したモデルへ上書きします。
 
 修正後は、指摘の重要度・修正範囲・回帰リスクを評価します。いずれかが高ければ、追加のユーザー確認なしに初回レビューのOpusセッションを続けて再レビューします。3項目すべてが低ければ再レビューを省略し、Lunaが実行した確認と省略理由を報告します。ネットワーク障害、結果不備、プロセス消失などの技術的な再実行には、引き続きユーザー確認が必要です。
 
@@ -89,7 +91,7 @@ Ponytailは、必要な変更だけに集中し、不要な抽象化や依存を
 
 レビューパケットは従来どおり単一ファイルで渡せます。レビュープロンプトも状態に残したい場合は、`review-packet.md`と任意の`review-prompt.md`を含む入力ディレクトリを渡します。スクリプトが両方を空の状態ディレクトリへコピーするため、状態ディレクトリを先に作ってプロンプトを置く必要はありません。既存の状態データを守るため、事前に内容がある状態ディレクトリは引き続き拒否されます。入力バンドルの2ファイルは空でない通常ファイルにし、シンボリックリンクは使用しません。
 
-`review-prompt.md`にはレビューの観点や優先事項を自由に書けます。出力形式はスキルが共通テンプレートからClaudeへ渡し、同じ定義で結果を検証します。形式が違うレビュー本文が返った場合、結果は採用せず、`status`で「本文あり・形式不一致」と元の結果ファイルを確認できます。Opusを自動で再実行しません。
+`review-prompt.md`にはレビューの観点や優先事項を自由に書けます。出力形式はスキルが共通テンプレートからClaudeへ渡し、同じ定義で結果を検証します。形式が違うレビュー本文が返った場合、結果は採用せず、`status`で「本文あり・形式不一致」と元の結果ファイルを確認できます。Opus 5.5を自動で再実行しません。
 
 通常の`start`と`resume`は完了まで待つ同期実行です。待機を呼び出し側から切り離す必要がある場合だけ、`start-background`または`resume-background`を使い、`status`で同じ状態を確認します。一度起動したOpusプロセスは停止しません。runnerとClaudeのPIDが両方消え、結果もない場合、`status`はユーザー確認が必要な失敗として報告し、自動再実行しません。`RUNNER_ALIVE`または`CLAUDE_ALIVE`が`permission_denied`の場合はsandboxに`ps`を拒否されています。実行権限を昇格して`status`を再実行します。別の`unknown`もプロセス消失の根拠にはなりません。詳細は[Claude連携のリファレンス](references/claude-integration.md)を参照してください。
 
@@ -119,7 +121,7 @@ export LUNA_PRIMARY_ENGINEER_CLAUDE=off
 
 ### `Request timed out` でレビューが止まる
 
-`claude auth status` が成功しても、CodexのsandboxからAnthropic APIへ接続できるとは限りません。実際のOpusレビューでは、コマンドをネットワーク利用可能な実行へ権限昇格する許可が必要になることがあります。必要な場合はレビュー開始前に許可を取得します。レビュー state が `stage=blocked`、`blocked_reason=network` になった場合は、利用者が再試行を明示的に許可したうえで、ネットワーク利用可能なコマンド実行環境から同じ state を再試行します。
+`claude auth status` が成功しても、CodexのsandboxからAnthropic APIへ接続できるとは限りません。実際のOpus 5.5レビューでは、コマンドをネットワーク利用可能な実行へ権限昇格する許可が必要になることがあります。必要な場合はレビュー開始前に許可を取得します。レビュー state が `stage=blocked`、`blocked_reason=network` になった場合は、利用者が再試行を明示的に許可したうえで、ネットワーク利用可能なコマンド実行環境から同じ state を再試行します。
 
 ```bash
 bash scripts/claude-review.sh retry STATE_DIR

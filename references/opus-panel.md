@@ -1,4 +1,4 @@
-# Opus advisory panel
+# Opus 5.5 advisory panel
 
 Use a panel only when the difficult part is reasoning, not routine
 implementation. Luna remains the router and evidence synthesizer.

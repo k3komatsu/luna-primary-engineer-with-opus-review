@@ -33,6 +33,9 @@ technical retries and duplicate reviews are never automatic.
 A real Opus call from a network-restricted Codex sandbox may require explicit
 escalation to network-enabled command execution before launch. Authentication
 success alone does not prove Anthropic API reachability from the sandbox.
+The default model is explicitly `claude-opus-5-5`; set
+`LUNA_PRIMARY_ENGINEER_CLAUDE_MODEL` only when an intentional override is
+needed.
 If status reports process liveness as permission_denied, ps was denied;
 escalate execution permission and rerun status without changing the review
 state. A different unknown value means process-list inspection failed for an
@@ -62,7 +65,7 @@ require_claude() {
   luna_primary_engineer_warn_billing
 }
 
-MODEL="${LUNA_PRIMARY_ENGINEER_CLAUDE_MODEL:-opus}"
+MODEL="${LUNA_PRIMARY_ENGINEER_CLAUDE_MODEL:-claude-opus-5-5}"
 EFFORT="${LUNA_PRIMARY_ENGINEER_CLAUDE_REVIEW_EFFORT:-xhigh}"
 SYSTEM_PROMPT="$ROOT_DIR/references/claude/reviewer-system.md"
 SYSTEM_PROMPT_TEXT="$(cat "$SYSTEM_PROMPT")"
@@ -422,13 +425,27 @@ launch_background() {
         echo "ERROR: a background operation is already attached to this state: $state_dir" >&2
         return 15
         ;;
-      permission_denied|unknown)
-        echo "ERROR: cannot prove the existing background process is gone; ps was denied. Escalate execution permission and rerun status before relaunching: $state_dir" >&2
+      permission_denied)
+        echo "ERROR: cannot prove the existing background process is gone; ps execution was denied. Escalate execution permission and rerun status before relaunching: $state_dir" >&2
+        return 15
+        ;;
+      unknown)
+        echo "ERROR: cannot prove the existing background process is gone; process inspection was inconclusive. Escalate execution permission and rerun status before relaunching: $state_dir" >&2
         return 15
         ;;
     esac
   fi
   previous_stage="$(cat "$state_dir/stage" 2>/dev/null || true)"
+  if [[ "$kind" == resume && "$previous_stage" == failed &&
+    -z "$(cat "$state_dir/current_round" 2>/dev/null || true)" &&
+    "$(cat "$state_dir/failure_reason" 2>/dev/null || true)" == process_gone_without_result &&
+    "$(cat "$state_dir/background_kind" 2>/dev/null || true)" == resume &&
+    "$(cat "$state_dir/background_parent_stage" 2>/dev/null || true)" == done ]]; then
+    # A detached resume can disappear after its parent review completed but
+    # before it creates rereview-N. Preserve the effective parent stage so the
+    # child follows the same recovery path as foreground resume.
+    previous_stage=done
+  fi
   printf '%s\n' "$previous_stage" > "$state_dir/background_parent_stage"
   printf '%s\n' "$kind" > "$state_dir/background_kind"
   printf 'queued\n' > "$state_dir/stage"
@@ -494,6 +511,99 @@ retry_initial_review() {
   fi
 }
 
+resume_background_preflight() {
+  local state_dir="$1" stage round round_stage failure_reason background_kind parent_stage
+  local session_id packet_abs prompt_abs review_cwd attempt_dir old_pid old_state
+  stage="$(cat "$state_dir/stage" 2>/dev/null || true)"
+  round="$(cat "$state_dir/current_round" 2>/dev/null || true)"
+  failure_reason="$(cat "$state_dir/failure_reason" 2>/dev/null || true)"
+
+  if [[ -f "$state_dir/background_pid" ]]; then
+    old_pid="$(cat "$state_dir/background_pid" 2>/dev/null || true)"
+    old_state="$(luna_primary_engineer_process_state "$old_pid")"
+    case "$old_state" in
+      alive)
+        echo "ERROR: a background operation is already attached to this state: $state_dir" >&2
+        return 15
+        ;;
+      permission_denied)
+        echo "ERROR: cannot prove the existing background process is gone; ps execution was denied. Escalate execution permission and rerun status before relaunching: $state_dir" >&2
+        return 15
+        ;;
+      unknown)
+        echo "ERROR: cannot prove the existing background process is gone; process inspection was inconclusive. Escalate execution permission and rerun status before relaunching: $state_dir" >&2
+        return 15
+        ;;
+    esac
+  fi
+
+  if [[ "$failure_reason" == claude_session_not_found ]] || {
+    [[ "$stage" == failed && "$round" == rereview-* ]] &&
+      attempt_dir="$(luna_primary_engineer_latest_attempt_dir "$state_dir/$round" 2>/dev/null || true)" &&
+      luna_primary_engineer_review_session_not_found "$attempt_dir/stderr.txt"
+  }; then
+    echo "ERROR: Claude session is not available for resume; inspect the state and obtain explicit approval for a new Opus review: $state_dir" >&2
+    return 10
+  fi
+
+  case "$stage" in
+    queued|running)
+      echo "ERROR: review is already in progress; inspect status before starting a background resume: $state_dir" >&2
+      return 15
+      ;;
+  esac
+
+  [[ -f "$state_dir/result.txt" ]] || {
+    echo "ERROR: completed review result is unavailable for resume: $state_dir" >&2
+    return 10
+  }
+
+  case "$stage" in
+    done)
+      ;;
+    failed)
+      if [[ "$round" == rereview-* ]]; then
+        round_stage="$(cat "$state_dir/$round/stage" 2>/dev/null || true)"
+        if [[ "$round_stage" != failed && ! ( "$round_stage" == done && "$failure_reason" == process_gone_without_result ) ]]; then
+          echo "ERROR: failed re-review state is not retryable: $state_dir" >&2
+          return 10
+        fi
+      else
+        background_kind="$(cat "$state_dir/background_kind" 2>/dev/null || true)"
+        parent_stage="$(cat "$state_dir/background_parent_stage" 2>/dev/null || true)"
+        if [[ -n "$round" || "$failure_reason" != process_gone_without_result || "$background_kind" != resume || "$parent_stage" != done ]]; then
+          echo "ERROR: failed initial review is not resumable; start a new review only after explicit user confirmation: $state_dir" >&2
+          return 10
+        fi
+      fi
+      ;;
+    blocked)
+      round_stage="$(cat "$state_dir/$round/stage" 2>/dev/null || true)"
+      if [[ "$round" != rereview-* || "$round_stage" != blocked || "$(cat "$state_dir/$round/blocked_reason" 2>/dev/null || true)" != network ]]; then
+        echo "ERROR: blocked initial review must use retry; blocked re-review is not resumable: $state_dir" >&2
+        return 10
+      fi
+      ;;
+    *)
+      echo "ERROR: completed review or retryable re-review not found: $state_dir (stage=${stage:-unknown})" >&2
+      return 10
+      ;;
+  esac
+
+  session_id="$(cat "$state_dir/session_id" 2>/dev/null || true)"
+  packet_abs="$(cat "$state_dir/packet_path" 2>/dev/null || true)"
+  prompt_abs="$(cat "$state_dir/prompt_path" 2>/dev/null || true)"
+  review_cwd="$(cat "$state_dir/cwd" 2>/dev/null || true)"
+  [[ "$session_id" =~ ^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$ ]] || {
+    echo "ERROR: review state has no resumable Claude session ID: $state_dir" >&2
+    return 2
+  }
+  [[ -f "$packet_abs" && -d "$review_cwd" && ( -z "$prompt_abs" || -f "$prompt_abs" ) ]] || {
+    echo "ERROR: original review inputs are unavailable: $state_dir" >&2
+    return 2
+  }
+}
+
 case "$MODE" in
   start)
     require_claude
@@ -554,6 +664,7 @@ case "$MODE" in
       exit 10
     fi
     if [[ "$MODE" == resume-background ]]; then
+      resume_background_preflight "$STATE_DIR" || { resume_preflight_rc=$?; exit "$resume_preflight_rc"; }
       launch_background "$STATE_DIR" resume resume "$STATE_DIR" "$DELTA"
       exit 0
     fi
@@ -565,6 +676,12 @@ case "$MODE" in
     LEGACY_ATTEMPT=""
     if [[ "$LEGACY_ROUND" == rereview-* ]]; then
       LEGACY_ATTEMPT="$(luna_primary_engineer_latest_attempt_dir "$STATE_DIR/$LEGACY_ROUND" 2>/dev/null || true)"
+    fi
+    if [[ "$PARENT_STAGE" == failed && -z "$LEGACY_ROUND" &&
+      "$(cat "$STATE_DIR/failure_reason" 2>/dev/null || true)" == process_gone_without_result &&
+      "$(cat "$STATE_DIR/background_kind" 2>/dev/null || true)" == resume &&
+      "$(cat "$STATE_DIR/background_parent_stage" 2>/dev/null || true)" == done ]]; then
+      PARENT_STAGE=done
     fi
     if [[ "$PARENT_STAGE" == failed && "$LEGACY_ROUND" == rereview-* && -n "$LEGACY_ATTEMPT" ]] && \
       luna_primary_engineer_review_network_failure "$LEGACY_ATTEMPT/stdout.txt" "$LEGACY_ATTEMPT/stderr.txt"; then

@@ -6,7 +6,7 @@ The review unit is a coherent completed change, not an individual edit.
 
 ```text
 Primary implements + validates
-  -> synchronous Opus review to a designated result file
+  -> synchronous Opus 5.5 review to a designated result file
   -> validated result contract (stdout is diagnostic only)
   -> same-state retry if network-blocked and explicitly approved
   -> Primary fixes findings

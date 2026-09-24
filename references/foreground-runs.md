@@ -1,4 +1,4 @@
-# Claude review lifecycle
+# Claude Opus 5.5 review lifecycle
 
 ## State machine
 

@@ -1,6 +1,6 @@
 ---
 name: luna-primary-engineer
-description: Context-efficient Codex engineering workflow. Luna Max/Fast is the persistent Primary Engineer with Ponytail FULL; Claude Opus provides optional read-only foreground review and focused multi-angle advice; Luna workers are parallel-only; Sol/Astra are rare final advisors.
+description: Context-efficient Codex engineering workflow. Luna Max/Fast is the persistent Primary Engineer with Ponytail FULL; Claude Opus 5.5 provides optional read-only foreground review and focused multi-angle advice; Luna workers are parallel-only; Sol/Astra are rare final advisors.
 ---
 
 # Luna Primary Engineer v6.8.0
@@ -24,7 +24,7 @@ required validation, safety, compatibility, and architecture boundaries.
 1. Luna understands the task and its invariants.
 2. Luna plans one coherent change unit.
 3. Luna implements it and runs focused checks.
-4. If requested or useful, run one Claude Opus review with
+4. If requested or explicitly approved by the user, run one Claude Opus 5.5 review with
    `scripts/claude-review.sh start`.
 5. Wait for that foreground process to finish. Collect only a completed,
    validated result file.
@@ -37,6 +37,10 @@ required validation, safety, compatibility, and architecture boundaries.
 Claude review is optional. Use `luna_reviewer` only when the Claude preflight
 fails before Claude is launched, or when the user disables Claude before
 launch. It is never a timeout, output, network, or in-flight fallback.
+
+The review and panel wrappers explicitly pass `--model claude-opus-5-5` by
+default. `LUNA_PRIMARY_ENGINEER_CLAUDE_MODEL` is an intentional override for
+compatibility or a user-selected model, not an implicit fallback.
 
 Every Claude review, re-review, retry, dual branch, and panel role consumes
 Claude usage. An ordinary same-session re-review immediately after fixing

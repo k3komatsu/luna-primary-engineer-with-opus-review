@@ -2,7 +2,7 @@
 
 [日本語](README.md) | English
 
-A software-development workflow for Codex Desktop and Codex CLI. GPT-5.6 Luna handles the work from investigation through implementation and testing. When useful, Claude Code Opus provides an optional, read-only review.
+A software-development workflow for Codex Desktop and Codex CLI. GPT-6 Luna handles the work from investigation through implementation and testing. When useful, Claude Code Opus 5.5 provides an optional, read-only review.
 
 ## Who it is for
 
@@ -15,7 +15,7 @@ A software-development workflow for Codex Desktop and Codex CLI. GPT-5.6 Luna ha
 
 This workflow started from a practical setup: Codex is the main development environment, and Claude Team (Standard) is also available and worth putting to use. I wanted to keep the Codex Plus usage allowance focused on implementation, but sending a Luna implementation to Terra or Sol for review can consume a substantial part of the five-hour usage window even when the review is the only extra work.
 
-The resulting split is simple: Codex Luna handles investigation, implementation, testing, and integration, while Claude Code Opus provides an independent, read-only review when needed. Codex remains the center of the workflow, with a second model added for another perspective.
+The resulting split is simple: Codex Luna handles investigation, implementation, testing, and integration, while Claude Code Opus 5.5 provides an independent, read-only review when needed. Codex remains the center of the workflow, with a second model added for another perspective.
 
 ## Setup
 
@@ -24,7 +24,7 @@ The resulting split is simple: Codex Luna handles investigation, implementation,
 - Codex Desktop or Codex CLI
 - Bash
 - Git if the supporting Ponytail skill should be downloaded automatically
-- Claude Code with valid authentication for Opus reviews
+- Claude Code with valid authentication for Opus 5.5 reviews
 
 Claude Code is optional. Without it, the Codex fallback reviewer is still available.
 
@@ -52,7 +52,7 @@ After installation, restart Codex Desktop or start a new Codex CLI session. Then
 $luna-primary-engineer
 ```
 
-GPT-5.6 Luna with Reasoning: Max and Service tier: Fast is recommended.
+GPT-6 Luna with Reasoning: Max and Service tier: Fast is recommended.
 
 ### Update
 
@@ -65,23 +65,25 @@ After updating, restart Codex Desktop or start a new Codex CLI session.
 
 ## How it works
 
-Codex Luna handles normal work. For larger or harder-to-judge changes, Claude Code Opus can be added as an independent reviewer.
+Codex Luna handles normal work. For larger or harder-to-judge changes, Claude Code Opus 5.5 can be added as an independent reviewer.
 
 ```text
 Request
    ↓
 Codex / Luna
   ├─ investigate / plan / implement / test
-  └─ optional Claude Code / Opus review
+  └─ optional Claude Code / Opus 5.5 review
 ```
 
 Ponytail is a supporting skill that keeps changes focused and avoids unnecessary abstractions and dependencies.
 
-## Opus review
+## Opus 5.5 review
 
-When a second opinion is useful, Claude Code Opus reviews the change in read-only mode. It checks for missed cases and design concerns from a perspective separate from Luna's.
+When a second opinion is useful, Claude Code Opus 5.5 reviews the change in read-only mode. It checks for missed cases and design concerns from a perspective separate from Luna's.
 
-In normal use, ask the Codex session, “Have Opus review this change too.” If Claude Code is unavailable before the review starts, the Codex fallback reviewer can be used instead. Once an Opus review has started, the workflow does not switch reviewers automatically while waiting for its result.
+In normal use, ask the Codex session, “Have Opus review this change too.” If Claude Code is unavailable before the review starts, the Codex fallback reviewer can be used instead. Once an Opus 5.5 review has started, the workflow does not switch reviewers automatically while waiting for its result.
+
+The review and panel wrappers explicitly pass `--model claude-opus-5-5` by default. Setting `LUNA_PRIMARY_ENGINEER_CLAUDE_MODEL` intentionally overrides that model.
 
 After fixes, Luna evaluates finding importance, fix scope, and regression risk. If any axis is high, it continues the initial Opus session for re-review without another user confirmation. If all three are low, it skips re-review and reports the focused checks and rationale. Technical reruns after network, result, or process failures still require user confirmation.
 
@@ -89,7 +91,7 @@ Reviews can take several minutes. Claude API and stream timeouts default to 10 m
 
 The legacy single packet file remains supported. To keep a reviewer-specific prompt in the reproducible state, pass an input directory containing `review-packet.md` and optional `review-prompt.md` (`prompt.md` is accepted as an alias). The wrapper copies both into a newly-created empty state directory; do not pre-populate the state directory. Existing state data remains protected and non-empty state directories are rejected. Bundle members must be non-empty regular files and must not be symlinks.
 
-Use `review-prompt.md` freely to set the review focus and priorities. The skill supplies the output format from one shared template and validates against that definition. If Claude returns review text in another format, `status` identifies the mismatch and gives the raw result path. The wrapper does not adopt it or start another Opus call automatically.
+Use `review-prompt.md` freely to set the review focus and priorities. The skill supplies the output format from one shared template and validates against that definition. If Claude returns review text in another format, `status` identifies the mismatch and gives the raw result path. The wrapper does not adopt it or start another Opus 5.5 call automatically.
 
 Normal `start` and `resume` calls wait synchronously. If the caller must stop waiting, use the explicit `start-background` or `resume-background` form and inspect the same state with `status`. Never stop an Opus process after launch. If both the runner and Claude PIDs disappear without a result, `status` reports a failed state that requires user confirmation and never relaunches automatically. If either liveness value is `permission_denied`, the sandbox denied `ps`; escalate execution permission and rerun `status`. A different `unknown` value is also inconclusive. See the [Claude integration reference](references/claude-integration.md) for details.
 
@@ -119,7 +121,7 @@ If `ANTHROPIC_API_KEY` is set, Claude Code may use an API-billed authentication 
 
 ### Review stops with `Request timed out`
 
-`claude auth status` can succeed even when the Codex sandbox cannot reach the Anthropic API. A real Opus review may require approving escalation of the command to network-enabled execution; obtain that permission before launch when needed. If the review state is `stage=blocked` with `blocked_reason=network`, explicitly approve a retry and then retry the same state from a network-enabled command environment:
+`claude auth status` can succeed even when the Codex sandbox cannot reach the Anthropic API. A real Opus 5.5 review may require approving escalation of the command to network-enabled execution; obtain that permission before launch when needed. If the review state is `stage=blocked` with `blocked_reason=network`, explicitly approve a retry and then retry the same state from a network-enabled command environment:
 
 ```bash
 bash scripts/claude-review.sh retry STATE_DIR

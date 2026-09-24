@@ -1,11 +1,14 @@
 # Claude Code integration
 
-Claude is optional. When enabled, Opus is an independent read-only reviewer;
+Claude is optional. When enabled, Opus 5.5 is an independent read-only reviewer;
 Luna remains the implementation owner.
+
+The review and panel wrappers explicitly pass `--model claude-opus-5-5` by
+default. `LUNA_PRIMARY_ENGINEER_CLAUDE_MODEL` is an intentional override.
 
 ## Execution model
 
-Ordinary `start` and `resume` invoke `claude -p` synchronously and wait for
+Ordinary `start` and `resume` invoke Claude Code's Opus 5.5 via `claude -p` synchronously and wait for
 the process to exit. If the caller must stop waiting, use the explicit
 wrapper-owned `start-background` or `resume-background` form and inspect the
 same state with `status`. These forms do not cut a foreground PTY and do not

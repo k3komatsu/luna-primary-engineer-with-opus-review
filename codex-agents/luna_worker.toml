@@ -1,6 +1,6 @@
 name = "luna_worker"
 description = "Parallel-only Luna Max implementation worker with Ponytail FULL. Use only when genuine parallelism, isolation, or an intentionally independent implementation justifies duplicated context."
-model = "gpt-5.6-luna"
+model = "gpt-6-luna"
 model_reasoning_effort = "max"
 service_tier = "default"
 sandbox_mode = "workspace-write"

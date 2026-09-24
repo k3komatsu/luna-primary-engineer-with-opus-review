@@ -238,6 +238,7 @@ grep -Fq -- 'idle-timeout=' "$MOCK_LOG"
 grep -Fq -- '--session-id' "$MOCK_LOG"
 grep -Fq -- "$REVIEW_SESSION_ID" "$MOCK_LOG"
 grep -Fq -- '--allowedTools' "$MOCK_LOG"
+grep -Fq -- 'claude-opus-5-5' "$MOCK_LOG"
 grep -Fq -- "Edit(/$REVIEW_STATE/attempt-1/reviewer-result.md)" "$MOCK_LOG"
 grep -Fq -- '--tools' "$MOCK_LOG"
 grep -Fq -- 'Read,Glob,Grep,Write' "$MOCK_LOG"
@@ -314,6 +315,15 @@ if bash "$SCRIPT_DIR/claude-review.sh" resume "$CONFLICT_INITIAL_STATE" "$DELTA"
 else
   [[ "$?" == 10 ]]
 fi
+if bash "$SCRIPT_DIR/claude-review.sh" resume-background "$CONFLICT_INITIAL_STATE" "$DELTA" >/dev/null 2>&1; then
+  echo "FAIL: invalid-format initial review was accepted by resume-background" >&2
+  exit 1
+else
+  [[ "$?" == 10 ]]
+fi
+[[ "$(cat "$CONFLICT_INITIAL_STATE/stage")" == failed ]]
+[[ "$(cat "$CONFLICT_INITIAL_STATE/failure_reason")" == review_returned_invalid_format ]]
+[[ ! -e "$CONFLICT_INITIAL_STATE/background_pid" ]]
 
 if bash "$SCRIPT_DIR/claude-review.sh" resume "$CONFLICT_STATE" "$DELTA" >/dev/null 2>"$TEST_INPUT/rereview-format-error.log"; then
   echo "FAIL: nonconforming re-review was silently adopted" >&2
@@ -558,6 +568,36 @@ fi
 bash "$SCRIPT_DIR/claude-review.sh" resume "$QUEUED_STATE" "$DELTA" >/dev/null
 [[ "$(cat "$QUEUED_STATE/stage")" == done ]]
 [[ "$(cat "$QUEUED_STATE/current_round")" == rereview-2 ]]
+
+# A resume wrapper that disappears before creating its first re-review round
+# remains resumable from the completed initial result.
+FIRST_RESUME_LOST_STATE="$(luna_primary_engineer_new_review_dir)"
+printf 'failed\n' > "$FIRST_RESUME_LOST_STATE/stage"
+printf 'resume\n' > "$FIRST_RESUME_LOST_STATE/background_kind"
+printf 'done\n' > "$FIRST_RESUME_LOST_STATE/background_parent_stage"
+printf 'process_gone_without_result\n' > "$FIRST_RESUME_LOST_STATE/failure_reason"
+printf '999999990\n' > "$FIRST_RESUME_LOST_STATE/background_pid"
+printf '%s\n' "$CONTRACT_TEXT" > "$FIRST_RESUME_LOST_STATE/result.txt"
+for metadata in packet_path session_id cwd handoff_mode; do cp "$REVIEW_STATE/$metadata" "$FIRST_RESUME_LOST_STATE/$metadata"; done
+bash "$SCRIPT_DIR/claude-review.sh" resume "$FIRST_RESUME_LOST_STATE" "$DELTA" >/dev/null
+[[ "$(cat "$FIRST_RESUME_LOST_STATE/stage")" == done ]]
+[[ "$(cat "$FIRST_RESUME_LOST_STATE/current_round")" == rereview-1 ]]
+
+FIRST_RESUME_BACKGROUND_STATE="$(luna_primary_engineer_new_review_dir)"
+printf 'failed\n' > "$FIRST_RESUME_BACKGROUND_STATE/stage"
+printf 'resume\n' > "$FIRST_RESUME_BACKGROUND_STATE/background_kind"
+printf 'done\n' > "$FIRST_RESUME_BACKGROUND_STATE/background_parent_stage"
+printf 'process_gone_without_result\n' > "$FIRST_RESUME_BACKGROUND_STATE/failure_reason"
+printf '999999990\n' > "$FIRST_RESUME_BACKGROUND_STATE/background_pid"
+printf '%s\n' "$CONTRACT_TEXT" > "$FIRST_RESUME_BACKGROUND_STATE/result.txt"
+for metadata in packet_path session_id cwd handoff_mode; do cp "$REVIEW_STATE/$metadata" "$FIRST_RESUME_BACKGROUND_STATE/$metadata"; done
+bash "$SCRIPT_DIR/claude-review.sh" resume-background "$FIRST_RESUME_BACKGROUND_STATE" "$DELTA" >/dev/null
+for _ in {1..50}; do
+  [[ "$(cat "$FIRST_RESUME_BACKGROUND_STATE/stage" 2>/dev/null || true)" == done ]] && break
+  sleep 0.02
+done
+[[ "$(cat "$FIRST_RESUME_BACKGROUND_STATE/stage")" == done ]]
+[[ "$(cat "$FIRST_RESUME_BACKGROUND_STATE/current_round")" == rereview-1 ]]
 
 # A lost run in the small round-creation window must still be reconciled.
 RACE_STATE="$(luna_primary_engineer_new_review_dir)"

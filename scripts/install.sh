@@ -64,7 +64,7 @@ fi
 if command -v claude >/dev/null 2>&1; then
   echo "Claude Code detected: $(command -v claude)"
   if claude auth status >/dev/null 2>&1; then
-    echo "Claude Code authentication: available (Opus review/panel enabled in auto mode)"
+    echo "Claude Code authentication: available (Opus 5.5 review/panel enabled in auto mode)"
   else
     echo "Claude Code authentication: not currently usable; Luna reviewer fallback will remain available"
   fi
@@ -82,7 +82,8 @@ printf '%s\n' \
   "Installed private Ponytail dependency to: $PONYTAIL_DEST" \
   "Primary Ponytail reference: $SKILL_DEST/references/ponytail/SKILL.md" \
   "Claude helpers: $SKILL_DEST/scripts/claude-job.sh, claude-review.sh, and claude-panel.sh" \
+  "Claude default model: claude-opus-5-5" \
   "Removed obsolete explorer if present: luna_explorer" \
   "Fully restart Codex Desktop and start a new session." \
-  "Recommended Primary: GPT-5.6 Luna / Max / Fast" \
+  "Recommended Primary: GPT-6 Luna / Max / Fast" \
   'Invoke with: $luna-primary-engineer'

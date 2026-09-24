@@ -23,6 +23,9 @@ consumes Claude usage.
 
 A real Opus call from a network-restricted Codex sandbox may require explicit
 escalation to network-enabled command execution before launch.
+The default model is explicitly `claude-opus-5-5`; set
+`LUNA_PRIMARY_ENGINEER_CLAUDE_MODEL` only when an intentional override is
+needed.
 If status reports process liveness as permission_denied, ps was denied;
 escalate execution permission and rerun status without changing the review
 state. A different unknown value means process-list inspection failed for an
@@ -42,7 +45,7 @@ require_claude() {
   luna_primary_engineer_warn_billing
 }
 
-MODEL="${LUNA_PRIMARY_ENGINEER_CLAUDE_MODEL:-opus}"
+MODEL="${LUNA_PRIMARY_ENGINEER_CLAUDE_MODEL:-claude-opus-5-5}"
 EFFORT="${LUNA_PRIMARY_ENGINEER_CLAUDE_PANEL_EFFORT:-max}"
 SYSTEM_PROMPT="$ROOT_DIR/references/claude/panel-system.md"
 SYSTEM_PROMPT_TEXT="$(cat "$SYSTEM_PROMPT")"

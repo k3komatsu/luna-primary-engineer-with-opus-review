@@ -6,8 +6,8 @@ Ponytail is used by **implementers**, not independent reviewers or advisors.
 
 - Primary Luna Max/Fast: **Ponytail FULL**
 - `luna_worker` Max/Standard: **Ponytail FULL**
-- Claude Opus reviewers: **no Ponytail; independent read-only sessions**
-- Claude Opus panel/advisors: **no Ponytail**
+- Claude Opus 5.5 reviewers: **no Ponytail; independent read-only sessions**
+- Claude Opus 5.5 panel/advisors: **no Ponytail**
 - fallback `luna_reviewer`: **no Ponytail**
 - `sol_advisor`: **no Ponytail**
 - `astra_expert`: **no Ponytail**

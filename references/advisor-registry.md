@@ -4,7 +4,7 @@ Maintain this conceptually in the Primary session or a small local note if neede
 
 ```text
 Expert ID:
-Surface: Claude Opus | Sol | Astra
+Surface: Claude Opus 5.5 | Sol | Astra
 Session/agent ID:
 Scope:
 Stable premises/invariants:
