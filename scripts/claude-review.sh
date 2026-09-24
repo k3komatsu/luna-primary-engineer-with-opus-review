@@ -41,6 +41,15 @@ escalate execution permission and rerun status without changing the review
 state. A different unknown value means process-list inspection failed for an
 other reason and also must not trigger a relaunch.
 
+Persistent ordinary start, retry, and resume calls also need filesystem write
+permission for Claude Code's history directory (default: ~/.claude/projects,
+or $CLAUDE_CONFIG_DIR/projects). The wrapper checks this before launch and
+verifies the session history file after a successful result. If the check
+reports CLAUDE_HISTORY_PERMISSION_REQUIRED=1, rerun the same persistent
+command with filesystem execution permission escalation; do not fall back or
+launch another review automatically. dual/panel calls are intentionally
+non-persistent and do not use this history requirement.
+
 REVIEW_INPUT may be a packet file (backward-compatible) or a bundle directory
 containing review-packet.md and an optional review-prompt.md (prompt.md is also
 accepted). The prompt is copied into the new state and read as reviewer context;
@@ -230,7 +239,25 @@ report_run_failure() {
 run_review() {
   local state_dir="$1" prompt="$2" add_dir="$3" result_kind="$4" review_cwd="$5" rc=0
   local attempt_dir result_file stdout_file stderr_file exit_file before after stdout_handoff_error=0
+  local persistent=1 session_id="" previous_arg="" history_state_dir="$add_dir" preserve_history_failure=0
   shift 5
+  for arg in "$@"; do
+    [[ "$arg" == --no-session-persistence ]] && persistent=0
+    if [[ "$previous_arg" == --session-id || "$previous_arg" == --resume ]]; then
+      session_id="$arg"
+    fi
+    previous_arg="$arg"
+  done
+  if [[ -f "$history_state_dir/result.txt" ]]; then
+    preserve_history_failure=1
+  fi
+  if [[ "$result_kind" == review && "$persistent" == 1 ]]; then
+    if ! luna_primary_engineer_check_saved_claude_history_permission "$history_state_dir"; then
+      luna_primary_engineer_mark_claude_history_failure "$state_dir" claude_history_permission_denied "$preserve_history_failure"
+      echo "ERROR: persistent Claude history access was denied before launch; rerun with filesystem execution permission escalation." >&2
+      return 12
+    fi
+  fi
   attempt_dir="$(next_child_dir "$state_dir" attempt)"
   result_file="$attempt_dir/reviewer-result.md"
   stdout_file="$attempt_dir/stdout.txt"
@@ -240,6 +267,9 @@ run_review() {
   printf 'running\n' > "$state_dir/stage"
   rm -f "$state_dir/blocked_reason"
   luna_primary_engineer_clear_user_confirmation "$state_dir"
+  if [[ "$result_kind" == review && "$persistent" == 1 ]]; then
+    luna_primary_engineer_record_claude_history_snapshot "$history_state_dir" "$attempt_dir"
+  fi
 
   before="$attempt_dir/repository-before.txt"
   after="$attempt_dir/repository-after.txt"
@@ -337,6 +367,14 @@ $(luna_primary_engineer_review_output_template)"
       ;;
   esac
 
+  if [[ "$result_kind" == review && "$persistent" == 1 ]]; then
+    if ! luna_primary_engineer_verify_claude_history "$history_state_dir" "$session_id" "$attempt_dir" 1; then
+      luna_primary_engineer_mark_claude_history_failure "$state_dir" claude_session_history_not_saved
+      report_run_failure "$state_dir" "$attempt_dir" "$result_file" "$stdout_file" "$stderr_file" "$exit_file" "Claude returned a valid review, but its persistent session history was not saved"
+      return 12
+    fi
+  fi
+
   luna_primary_engineer_adopt_result "$result_file" "$state_dir/result.txt" || {
     printf 'failed\n' > "$state_dir/stage"
     luna_primary_engineer_require_user_confirmation "$state_dir" result_adoption_failed
@@ -361,6 +399,10 @@ collect_review() {
     return 11
   fi
   [[ "$stage" == done ]] || { echo "ERROR: review is not complete: $state_dir (stage=${stage:-unknown})" >&2; return 10; }
+  if [[ "$(cat "$state_dir/user_confirmation_required" 2>/dev/null || true)" == 1 ]]; then
+    echo "ERROR: review state requires recovery before collecting its prior result: $state_dir" >&2
+    return 12
+  fi
   if ! luna_primary_engineer_review_contract_complete "$state_dir/result.txt"; then
     echo "ERROR: adopted review result lacks the complete review contract; inspect the stored diagnostics." >&2
     return 18
@@ -369,10 +411,23 @@ collect_review() {
 }
 
 initialize_single_review() {
-  local input="$1" requested_state="$2" label="$3" packet prompt
+  local input="$1" requested_state="$2" label="$3" packet prompt config_dir config_dir_explicit=0
   resolve_review_input "$input" || return
   packet="$REVIEW_PACKET_SOURCE"
   prompt="$REVIEW_PROMPT_SOURCE"
+  if [[ -n "${CLAUDE_CONFIG_DIR:-}" ]]; then
+    config_dir_explicit=1
+  fi
+  config_dir="$(luna_primary_engineer_claude_config_dir)" || return
+  luna_primary_engineer_check_claude_history_permission "$config_dir" || return $?
+  if (( config_dir_explicit == 1 )); then
+    export CLAUDE_CONFIG_DIR="$config_dir"
+  else
+    # Keep Claude Code's native ~/.claude.json configuration when no override
+    # was requested. The effective .claude directory above is used only to
+    # preflight and verify the persistent projects history.
+    unset CLAUDE_CONFIG_DIR
+  fi
   STATE_DIR="$(luna_primary_engineer_prepare_review_dir "$requested_state")" || return
   luna_primary_engineer_require_fresh_state_dir "$STATE_DIR" || return
   SESSION_ID="$(luna_primary_engineer_new_session_id)" || return 1
@@ -391,6 +446,10 @@ initialize_single_review() {
   printf '%s\n' "$SESSION_ID" > "$STATE_DIR/session_id"
   printf '%s\n' "$PACKET_ABS" > "$STATE_DIR/packet_path"
   printf '%s\n' "$HANDOFF_MODE" > "$STATE_DIR/handoff_mode"
+  printf '%s\n' "$config_dir" > "$STATE_DIR/claude_config_dir"
+  printf '%s\n' "$config_dir_explicit" > "$STATE_DIR/claude_config_dir_explicit"
+  printf '%s\n' "$config_dir/projects" > "$STATE_DIR/claude_history_root"
+  printf '1\n' > "$STATE_DIR/claude_history_preflight_ok"
   printf 'queued\n' > "$STATE_DIR/stage"
 }
 
@@ -408,6 +467,7 @@ run_single_review() {
   review_cwd="$(cat "$state_dir/cwd" 2>/dev/null || true)"
   [[ -f "$packet_abs" && -d "$review_cwd" && ( -z "$prompt_abs" || -f "$prompt_abs" ) ]] || { echo "ERROR: review state metadata is incomplete: $state_dir" >&2; return 2; }
   [[ "$session_id" =~ ^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$ ]] || { echo "ERROR: invalid Claude session ID in $state_dir" >&2; return 2; }
+  luna_primary_engineer_export_saved_claude_config_dir "$state_dir"
   HANDOFF_MODE="$(cat "$state_dir/handoff_mode" 2>/dev/null || luna_primary_engineer_result_handoff_mode)" || return
   prompt="$(single_prompt "$packet_abs" "$prompt_abs")"
   (cd "$review_cwd" && run_review "$state_dir" "$prompt" "$state_dir" review "$review_cwd" --session-id "$session_id")
@@ -491,6 +551,17 @@ retry_initial_review() {
   review_cwd="$(cat "$state_dir/cwd" 2>/dev/null || true)"
   [[ "$session_id" =~ ^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$ ]] || { echo "ERROR: review state has no resumable Claude session ID: $state_dir" >&2; return 2; }
   [[ -f "$packet_abs" && -d "$review_cwd" && ( -z "$prompt_abs" || -f "$prompt_abs" ) ]] || { echo "ERROR: original review inputs are unavailable: $state_dir" >&2; return 2; }
+  luna_primary_engineer_export_saved_claude_config_dir "$state_dir"
+  if ! luna_primary_engineer_check_saved_claude_history_permission "$state_dir"; then
+    luna_primary_engineer_mark_claude_history_failure "$state_dir" claude_history_permission_denied 1
+    echo "ERROR: persistent Claude history access was denied before retry; rerun with filesystem execution permission escalation." >&2
+    return 12
+  fi
+  if ! luna_primary_engineer_verify_claude_history "$state_dir" "$session_id"; then
+    luna_primary_engineer_mark_claude_history_failure "$state_dir" claude_session_history_missing
+    echo "ERROR: the saved Claude session history is missing; do not retry automatically. Obtain explicit approval and run a new Opus review with filesystem execution permission escalation." >&2
+    return 12
+  fi
   n=1
   while [[ -e "$state_dir/network-retry-$n" ]]; do n=$((n + 1)); done
   retry_dir="$state_dir/network-retry-$n"
@@ -602,6 +673,17 @@ resume_background_preflight() {
     echo "ERROR: original review inputs are unavailable: $state_dir" >&2
     return 2
   }
+  luna_primary_engineer_export_saved_claude_config_dir "$state_dir"
+  if ! luna_primary_engineer_check_saved_claude_history_permission "$state_dir"; then
+    luna_primary_engineer_mark_claude_history_failure "$state_dir" claude_history_permission_denied 1
+    echo "ERROR: persistent Claude history access was denied before background resume; rerun with filesystem execution permission escalation." >&2
+    return 12
+  fi
+  if ! luna_primary_engineer_verify_claude_history "$state_dir" "$session_id"; then
+    luna_primary_engineer_mark_claude_history_failure "$state_dir" claude_session_history_missing
+    echo "ERROR: the saved Claude session history is missing; do not relaunch a background resume. Obtain explicit approval and run a new Opus review with filesystem execution permission escalation." >&2
+    return 12
+  fi
 }
 
 case "$MODE" in
@@ -716,6 +798,17 @@ case "$MODE" in
     REVIEW_CWD="$(cat "$STATE_DIR/cwd" 2>/dev/null || true)"
     [[ -f "$PACKET_ABS" && -d "$REVIEW_CWD" && ( -z "$PROMPT_ABS" || -f "$PROMPT_ABS" ) ]] || { echo "ERROR: original review inputs are unavailable: $STATE_DIR" >&2; exit 2; }
     [[ "$SESSION_ID" =~ ^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$ ]] || { echo "ERROR: review state has no resumable Claude session ID: $STATE_DIR" >&2; exit 2; }
+    luna_primary_engineer_export_saved_claude_config_dir "$STATE_DIR"
+    if ! luna_primary_engineer_check_saved_claude_history_permission "$STATE_DIR"; then
+    luna_primary_engineer_mark_claude_history_failure "$STATE_DIR" claude_history_permission_denied 1
+      echo "ERROR: persistent Claude history access was denied before resume; rerun with filesystem execution permission escalation." >&2
+      exit 12
+    fi
+    if ! luna_primary_engineer_verify_claude_history "$STATE_DIR" "$SESSION_ID"; then
+      luna_primary_engineer_mark_claude_history_failure "$STATE_DIR" claude_session_history_missing
+      echo "ERROR: the saved Claude session history is missing; do not relaunch a foreground resume. Obtain explicit approval and run a new Opus review with filesystem execution permission escalation." >&2
+      exit 12
+    fi
     HANDOFF_MODE="$(cat "$STATE_DIR/handoff_mode" 2>/dev/null || luna_primary_engineer_result_handoff_mode)" || exit $?
 
     if [[ "$PARENT_STAGE" == blocked ]]; then
@@ -764,6 +857,21 @@ case "$MODE" in
       fi
       if [[ -f "$ROUND/failure_reason" ]]; then cp -- "$ROUND/failure_reason" "$STATE_DIR/failure_reason"; fi
       if [[ -f "$ROUND/user_confirmation_required" ]]; then cp -- "$ROUND/user_confirmation_required" "$STATE_DIR/user_confirmation_required"; fi
+      if [[ -f "$ROUND/claude_history_permission_required" ]]; then
+        cp -- "$ROUND/claude_history_permission_required" "$STATE_DIR/claude_history_permission_required"
+      elif [[ "$(cat "$ROUND/failure_reason" 2>/dev/null || true)" == claude_session_history_not_saved ||
+        "$(cat "$ROUND/failure_reason" 2>/dev/null || true)" == claude_session_history_missing ]]; then
+        rm -f "$STATE_DIR/claude_history_permission_required"
+      fi
+      if [[ -f "$ROUND/claude_history_verified" ]]; then
+        cp -- "$ROUND/claude_history_verified" "$STATE_DIR/claude_history_verified"
+      fi
+      if [[ -f "$ROUND/claude_history_path" ]]; then
+        cp -- "$ROUND/claude_history_path" "$STATE_DIR/claude_history_path"
+      elif [[ "$(cat "$ROUND/failure_reason" 2>/dev/null || true)" == claude_session_history_not_saved ||
+        "$(cat "$ROUND/failure_reason" 2>/dev/null || true)" == claude_session_history_missing ]]; then
+        rm -f "$STATE_DIR/claude_history_path"
+      fi
       exit "$resume_rc"
     fi
     ;;

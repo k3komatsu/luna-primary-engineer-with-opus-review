@@ -9,6 +9,8 @@ WORKSPACE="$(luna_primary_engineer_review_workspace)"
 TEST_INPUT="$(luna_primary_engineer_new_review_dir)"
 COMMON_STATE="$(luna_primary_engineer_new_review_dir)"
 SMOKE_DIR="$(luna_primary_engineer_new_review_dir)"
+CLAUDE_CONFIG_DIR="$TEST_INPUT/claude-config"
+export CLAUDE_CONFIG_DIR
 
 CONTRACT_LINES=(
   'VERDICT: PASS'
@@ -103,14 +105,22 @@ claude() {
     printf '%s\n' '--allowedTools --tools --disallowedTools'
     return 0
   fi
+  local session_id="" previous_arg="" persistent=1 arg mock_config_dir history_session_id
+  for arg in "$@"; do
+    [[ "$arg" == --no-session-persistence ]] && persistent=0
+    if [[ "$previous_arg" == --session-id || "$previous_arg" == --resume ]]; then
+      session_id="$arg"
+    fi
+    previous_arg="$arg"
+  done
   printf '%s\n' \
     "api-timeout=${API_TIMEOUT_MS:-unset}" \
     "idle-timeout=${CLAUDE_STREAM_IDLE_TIMEOUT_MS:-unset}" \
     "byte-idle-timeout=${CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS:-unset}" \
     "first-byte-timeout=${CLAUDE_STREAM_FIRST_BYTE_TIMEOUT_MS:-unset}" \
+    "history-config=${CLAUDE_CONFIG_DIR:-unset}" \
     "$@" >> "$MOCK_LOG"
   if [[ "${MOCK_STRICT_CLI:-0}" == 1 ]]; then
-    local arg
     for arg in "$@"; do
       case "$arg" in
         MultiEdit|NotebookEdit)
@@ -127,6 +137,19 @@ claude() {
       ! printf '%s\n' "$@" | grep -Eq '^Edit\(//'; then
       printf '%s\n' 'Permission allow rule must use an absolute Edit(//path) rule' >&2
       return 2
+    fi
+  fi
+  if [[ "$persistent" == 1 && -n "$session_id" ]]; then
+    mock_config_dir="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
+    history_session_id="$session_id"
+    if [[ "${MOCK_LOWERCASE_HISTORY:-0}" == 1 ]]; then
+      history_session_id="$(printf '%s' "$session_id" | tr '[:upper:]' '[:lower:]')"
+    fi
+    mkdir -p "$mock_config_dir/projects"
+    if [[ "${MOCK_NO_HISTORY:-0}" == 1 ]]; then
+      :
+    else
+      printf '%s\n' "session=$session_id" "review-result=${LUNA_PRIMARY_ENGINEER_REVIEW_RESULT_PATH:-unset}" > "$mock_config_dir/projects/$history_session_id.jsonl"
     fi
   fi
   if [[ "${MOCK_FAIL:-0}" == 1 ]]; then return 7; fi
@@ -220,8 +243,10 @@ MOCK_DELAY=0
 MOCK_PS_DENIED=0
 MOCK_PS_UNKNOWN=0
 MOCK_TRUNCATED=0
+MOCK_NO_HISTORY=0
+MOCK_LOWERCASE_HISTORY=0
 MOCK_ALIVE_PIDS=""
-export MOCK_LOG MOCK_FAIL MOCK_NETWORK_FAIL MOCK_MISSING_RESULT MOCK_EMPTY_RESULT MOCK_INCOMPLETE MOCK_MARKDOWN_RESULT MOCK_STDOUT_CONTRACT MOCK_PERMISSION_FAIL MOCK_NO_CONVERSATION_FAIL MOCK_STRICT_CLI MOCK_DELAY MOCK_PS_DENIED MOCK_PS_UNKNOWN MOCK_TRUNCATED MOCK_ALIVE_PIDS CONTRACT_TEXT MARKDOWN_CONTRACT_TEXT
+export MOCK_LOG MOCK_FAIL MOCK_NETWORK_FAIL MOCK_MISSING_RESULT MOCK_EMPTY_RESULT MOCK_INCOMPLETE MOCK_MARKDOWN_RESULT MOCK_STDOUT_CONTRACT MOCK_PERMISSION_FAIL MOCK_NO_CONVERSATION_FAIL MOCK_STRICT_CLI MOCK_DELAY MOCK_PS_DENIED MOCK_PS_UNKNOWN MOCK_TRUNCATED MOCK_NO_HISTORY MOCK_LOWERCASE_HISTORY MOCK_ALIVE_PIDS CONTRACT_TEXT MARKDOWN_CONTRACT_TEXT
 
 PACKET="$TEST_INPUT/packet.md"
 DELTA="$TEST_INPUT/delta.md"
@@ -247,11 +272,253 @@ grep -Fq -- 'Read,Glob,Grep,Write' "$MOCK_LOG"
 ! grep -Fq -- 'NotebookEdit' "$MOCK_LOG"
 [[ ! -s "$REVIEW_STATE/attempt-1/stdout.txt" ]]
 luna_primary_engineer_review_contract_complete "$REVIEW_STATE/result.txt"
+[[ "$(cat "$REVIEW_STATE/claude_config_dir")" == "$CLAUDE_CONFIG_DIR" ]]
+[[ "$(cat "$REVIEW_STATE/claude_config_dir_explicit")" == 1 ]]
+[[ "$(cat "$REVIEW_STATE/claude_history_root")" == "$CLAUDE_CONFIG_DIR/projects" ]]
+[[ "$(cat "$REVIEW_STATE/claude_history_verified")" == 1 ]]
+[[ -f "$(cat "$REVIEW_STATE/claude_history_path")" ]]
 [[ "$(cat "$REVIEW_STATE/attempt-1/runner_pid")" =~ ^[1-9][0-9]*$ ]]
 [[ "$(cat "$REVIEW_STATE/attempt-1/claude_pid")" =~ ^[1-9][0-9]*$ ]]
 REVIEW_STATUS="$(bash "$SCRIPT_DIR/claude-review.sh" status "$REVIEW_STATE")"
 grep -Eq '^RUNNER_PID=[1-9][0-9]*$' <<< "$REVIEW_STATUS"
 grep -Eq '^CLAUDE_PID=[1-9][0-9]*$' <<< "$REVIEW_STATUS"
+grep -Fq 'CLAUDE_HISTORY_VERIFIED=1' <<< "$REVIEW_STATUS"
+grep -Fq 'CLAUDE_CONFIG_DIR_EXPLICIT=1' <<< "$REVIEW_STATUS"
+
+# When no override is supplied, Claude Code must keep its native config-file
+# behavior while the wrapper still verifies the default projects history root.
+DEFAULT_HOME="$TEST_INPUT/default-home"
+DEFAULT_CONFIG_STATE="$(luna_primary_engineer_new_review_dir)"
+env -u CLAUDE_CONFIG_DIR HOME="$DEFAULT_HOME" bash "$SCRIPT_DIR/claude-review.sh" start "$PACKET" "$DEFAULT_CONFIG_STATE" default-config >/dev/null
+[[ "$(cat "$DEFAULT_CONFIG_STATE/claude_config_dir")" == "$DEFAULT_HOME/.claude" ]]
+[[ "$(cat "$DEFAULT_CONFIG_STATE/claude_config_dir_explicit")" == 0 ]]
+[[ "$(cat "$DEFAULT_CONFIG_STATE/claude_history_root")" == "$DEFAULT_HOME/.claude/projects" ]]
+[[ "$(cat "$DEFAULT_CONFIG_STATE/claude_history_verified")" == 1 ]]
+[[ -f "$(cat "$DEFAULT_CONFIG_STATE/claude_history_path")" ]]
+grep -Fq 'history-config=unset' "$MOCK_LOG"
+
+# Claude may normalize a UUID's case in the history filename; discovery must
+# still accept the exact session without falling back to content-wide grep.
+LOWERCASE_HISTORY_STATE="$(luna_primary_engineer_new_review_dir)"
+MOCK_LOWERCASE_HISTORY=1
+export MOCK_LOWERCASE_HISTORY
+bash "$SCRIPT_DIR/claude-review.sh" start "$PACKET" "$LOWERCASE_HISTORY_STATE" lowercase-history >/dev/null
+MOCK_LOWERCASE_HISTORY=0
+export MOCK_LOWERCASE_HISTORY
+[[ "$(cat "$LOWERCASE_HISTORY_STATE/stage")" == done ]]
+[[ "$(cat "$LOWERCASE_HISTORY_STATE/claude_history_verified")" == 1 ]]
+[[ -f "$(cat "$LOWERCASE_HISTORY_STATE/claude_history_path")" ]]
+
+# A valid reviewer response without a saved session history is never adopted
+# and does not trigger a second Claude launch.
+NO_HISTORY_STATE="$(luna_primary_engineer_new_review_dir)"
+NO_HISTORY_LAUNCHES_BEFORE="$(grep -c '^--model$' "$MOCK_LOG")"
+MOCK_NO_HISTORY=1
+export MOCK_NO_HISTORY
+if bash "$SCRIPT_DIR/claude-review.sh" start "$PACKET" "$NO_HISTORY_STATE" no-history >/dev/null 2>"$TEST_INPUT/no-history-error.log"; then
+  echo "FAIL: a valid result without Claude history was accepted" >&2
+  exit 1
+else
+  NO_HISTORY_RC=$?
+fi
+MOCK_NO_HISTORY=0
+export MOCK_NO_HISTORY
+NO_HISTORY_LAUNCHES_AFTER="$(grep -c '^--model$' "$MOCK_LOG")"
+[[ "$NO_HISTORY_RC" == 12 ]]
+[[ "$NO_HISTORY_LAUNCHES_AFTER" == $((NO_HISTORY_LAUNCHES_BEFORE + 1)) ]]
+[[ "$(cat "$NO_HISTORY_STATE/stage")" == failed ]]
+[[ "$(cat "$NO_HISTORY_STATE/failure_reason")" == claude_session_history_not_saved ]]
+[[ "$(cat "$NO_HISTORY_STATE/user_confirmation_required")" == 1 ]]
+[[ "$(cat "$NO_HISTORY_STATE/claude_history_verified")" == 0 ]]
+[[ ! -e "$NO_HISTORY_STATE/result.txt" ]]
+
+# A resumed turn whose transcript does not change is rejected and propagated
+# from the rereview round to the parent without replacing the prior result.
+NO_HISTORY_RESUME_STATE="$(luna_primary_engineer_new_review_dir)"
+for metadata in packet_path session_id cwd handoff_mode claude_config_dir claude_config_dir_explicit claude_history_root claude_history_path; do cp "$REVIEW_STATE/$metadata" "$NO_HISTORY_RESUME_STATE/$metadata"; done
+cp "$REVIEW_STATE/result.txt" "$NO_HISTORY_RESUME_STATE/result.txt"
+printf 'done\n' > "$NO_HISTORY_RESUME_STATE/stage"
+NO_HISTORY_RESUME_LAUNCHES_BEFORE="$(grep -c '^--model$' "$MOCK_LOG")"
+MOCK_NO_HISTORY=1
+export MOCK_NO_HISTORY
+if bash "$SCRIPT_DIR/claude-review.sh" resume "$NO_HISTORY_RESUME_STATE" "$DELTA" >/dev/null 2>"$TEST_INPUT/no-history-resume-error.log"; then
+  echo "FAIL: an unchanged resumed history was accepted" >&2
+  exit 1
+else
+  NO_HISTORY_RESUME_RC=$?
+fi
+MOCK_NO_HISTORY=0
+export MOCK_NO_HISTORY
+[[ "$NO_HISTORY_RESUME_RC" == 12 ]]
+[[ "$(grep -c '^--model$' "$MOCK_LOG")" == $((NO_HISTORY_RESUME_LAUNCHES_BEFORE + 1)) ]]
+[[ "$(cat "$NO_HISTORY_RESUME_STATE/stage")" == failed ]]
+[[ "$(cat "$NO_HISTORY_RESUME_STATE/failure_reason")" == claude_session_history_not_saved ]]
+[[ "$(cat "$NO_HISTORY_RESUME_STATE/rereview-1/stage")" == failed ]]
+[[ "$(cat "$NO_HISTORY_RESUME_STATE/claude_history_verified")" == 0 ]]
+[[ -s "$NO_HISTORY_RESUME_STATE/result.txt" ]]
+
+# A state created before the config-directory marker existed must keep the
+# native Claude configuration on resume and be upgraded with explicit=0.
+LEGACY_HOME="$TEST_INPUT/legacy-home"
+mkdir -p "$LEGACY_HOME/.claude/projects"
+LEGACY_STATE="$(luna_primary_engineer_new_review_dir)"
+LEGACY_SESSION_ID="$(cat "$REVIEW_STATE/session_id")"
+printf '%s\n' "session=$LEGACY_SESSION_ID" > "$LEGACY_HOME/.claude/projects/$LEGACY_SESSION_ID.jsonl"
+for metadata in packet_path session_id cwd handoff_mode; do cp "$REVIEW_STATE/$metadata" "$LEGACY_STATE/$metadata"; done
+cp "$REVIEW_STATE/result.txt" "$LEGACY_STATE/result.txt"
+printf 'done\n' > "$LEGACY_STATE/stage"
+LEGACY_LOG_LINES_BEFORE="$(wc -l < "$MOCK_LOG")"
+env -u CLAUDE_CONFIG_DIR HOME="$LEGACY_HOME" bash "$SCRIPT_DIR/claude-review.sh" resume "$LEGACY_STATE" "$DELTA" >/dev/null
+[[ "$(cat "$LEGACY_STATE/stage")" == done ]]
+[[ "$(cat "$LEGACY_STATE/claude_config_dir_explicit")" == 0 ]]
+[[ "$(cat "$LEGACY_STATE/claude_config_dir")" == "$LEGACY_HOME/.claude" ]]
+sed -n "$((LEGACY_LOG_LINES_BEFORE + 1)),\$p" "$MOCK_LOG" | grep -Fq 'history-config=unset'
+
+# Persistent reviews must fail before Claude launches if the enclosing
+# sandbox cannot write the history location. The empty requested state remains
+# reusable after the caller obtains execution-permission escalation.
+HISTORY_PERMISSION_TARGET="$TEST_INPUT/history-target-file"
+printf '%s\n' 'not a directory' > "$HISTORY_PERMISSION_TARGET"
+HISTORY_PERMISSION_STATE="$(luna_primary_engineer_new_review_dir)"
+HISTORY_PERMISSION_LOG_LINES="$(wc -l < "$MOCK_LOG")"
+if CLAUDE_CONFIG_DIR="$HISTORY_PERMISSION_TARGET" bash "$SCRIPT_DIR/claude-review.sh" start "$PACKET" "$HISTORY_PERMISSION_STATE" history-permission >/dev/null 2>"$TEST_INPUT/history-permission-error.log"; then
+  echo "FAIL: unwritable Claude history location was accepted" >&2
+  exit 1
+else
+  HISTORY_PERMISSION_RC=$?
+fi
+[[ "$HISTORY_PERMISSION_RC" == 12 ]]
+[[ -z "$(find "$HISTORY_PERMISSION_STATE" -mindepth 1 -print -quit)" ]]
+[[ "$(wc -l < "$MOCK_LOG")" == "$HISTORY_PERMISSION_LOG_LINES" ]]
+grep -Fq 'CLAUDE_HISTORY_PERMISSION_REQUIRED=1' "$TEST_INPUT/history-permission-error.log"
+grep -Fq 'filesystem execution permission escalation' "$TEST_INPUT/history-permission-error.log"
+
+# Permission loss before a resume launch preserves the completed parent state
+# so the same session can resume after execution permission is restored.
+PERMISSION_RESUME_STATE="$(luna_primary_engineer_new_review_dir)"
+for metadata in packet_path session_id cwd handoff_mode; do cp "$REVIEW_STATE/$metadata" "$PERMISSION_RESUME_STATE/$metadata"; done
+cp "$REVIEW_STATE/result.txt" "$PERMISSION_RESUME_STATE/result.txt"
+printf 'done\n' > "$PERMISSION_RESUME_STATE/stage"
+printf '%s\n' "$HISTORY_PERMISSION_TARGET" > "$PERMISSION_RESUME_STATE/claude_config_dir"
+printf '1\n' > "$PERMISSION_RESUME_STATE/claude_config_dir_explicit"
+printf '%s\n' "$HISTORY_PERMISSION_TARGET/projects" > "$PERMISSION_RESUME_STATE/claude_history_root"
+PERMISSION_RESUME_LOG_LINES="$(wc -l < "$MOCK_LOG")"
+if CLAUDE_CONFIG_DIR="$HISTORY_PERMISSION_TARGET" bash "$SCRIPT_DIR/claude-review.sh" resume "$PERMISSION_RESUME_STATE" "$DELTA" >/dev/null 2>"$TEST_INPUT/resume-permission-error.log"; then
+  echo "FAIL: resume permission denial unexpectedly launched" >&2
+  exit 1
+else
+  PERMISSION_RESUME_RC=$?
+fi
+[[ "$PERMISSION_RESUME_RC" == 12 ]]
+[[ "$(cat "$PERMISSION_RESUME_STATE/stage")" == done ]]
+[[ "$(cat "$PERMISSION_RESUME_STATE/failure_reason")" == claude_history_permission_denied ]]
+[[ "$(cat "$PERMISSION_RESUME_STATE/user_confirmation_required")" == 1 ]]
+[[ -f "$PERMISSION_RESUME_STATE/claude_history_permission_required" ]]
+[[ ! -e "$PERMISSION_RESUME_STATE/rereview-1" ]]
+[[ "$(wc -l < "$MOCK_LOG")" == "$PERMISSION_RESUME_LOG_LINES" ]]
+grep -Fq 'filesystem execution permission escalation' "$TEST_INPUT/resume-permission-error.log"
+if PERMISSION_RESUME_STATUS="$(bash "$SCRIPT_DIR/claude-review.sh" status "$PERMISSION_RESUME_STATE" 2>&1)"; then
+  echo "FAIL: pending recovery status returned success" >&2
+  exit 1
+else
+  PERMISSION_RESUME_STATUS_RC=$?
+fi
+[[ "$PERMISSION_RESUME_STATUS_RC" == 12 ]]
+grep -Fq 'RECOVERY_PENDING=1' <<< "$PERMISSION_RESUME_STATUS"
+if bash "$SCRIPT_DIR/claude-review.sh" collect "$PERMISSION_RESUME_STATE" >/dev/null 2>"$TEST_INPUT/pending-collect-error.log"; then
+  echo "FAIL: collect accepted a state awaiting permission recovery" >&2
+  exit 1
+else
+  PENDING_COLLECT_RC=$?
+fi
+[[ "$PENDING_COLLECT_RC" == 12 ]]
+cp "$REVIEW_STATE/claude_config_dir" "$PERMISSION_RESUME_STATE/claude_config_dir"
+cp "$REVIEW_STATE/claude_config_dir_explicit" "$PERMISSION_RESUME_STATE/claude_config_dir_explicit"
+cp "$REVIEW_STATE/claude_history_root" "$PERMISSION_RESUME_STATE/claude_history_root"
+cp "$REVIEW_STATE/claude_history_path" "$PERMISSION_RESUME_STATE/claude_history_path"
+bash "$SCRIPT_DIR/claude-review.sh" resume "$PERMISSION_RESUME_STATE" "$DELTA" >/dev/null
+[[ "$(cat "$PERMISSION_RESUME_STATE/stage")" == done ]]
+[[ "$(cat "$PERMISSION_RESUME_STATE/current_round")" == rereview-1 ]]
+[[ ! -e "$PERMISSION_RESUME_STATE/claude_history_permission_required" ]]
+[[ ! -e "$PERMISSION_RESUME_STATE/failure_reason" ]]
+
+# The detached resume preflight has the same preservation and recovery rules.
+PERMISSION_RESUME_BACKGROUND_STATE="$(luna_primary_engineer_new_review_dir)"
+for metadata in packet_path session_id cwd handoff_mode; do cp "$REVIEW_STATE/$metadata" "$PERMISSION_RESUME_BACKGROUND_STATE/$metadata"; done
+cp "$REVIEW_STATE/result.txt" "$PERMISSION_RESUME_BACKGROUND_STATE/result.txt"
+printf 'done\n' > "$PERMISSION_RESUME_BACKGROUND_STATE/stage"
+printf '%s\n' "$HISTORY_PERMISSION_TARGET" > "$PERMISSION_RESUME_BACKGROUND_STATE/claude_config_dir"
+printf '1\n' > "$PERMISSION_RESUME_BACKGROUND_STATE/claude_config_dir_explicit"
+printf '%s\n' "$HISTORY_PERMISSION_TARGET/projects" > "$PERMISSION_RESUME_BACKGROUND_STATE/claude_history_root"
+if CLAUDE_CONFIG_DIR="$HISTORY_PERMISSION_TARGET" bash "$SCRIPT_DIR/claude-review.sh" resume-background "$PERMISSION_RESUME_BACKGROUND_STATE" "$DELTA" >/dev/null 2>"$TEST_INPUT/resume-background-permission-error.log"; then
+  echo "FAIL: background resume permission denial unexpectedly launched" >&2
+  exit 1
+else
+  PERMISSION_RESUME_BACKGROUND_RC=$?
+fi
+[[ "$PERMISSION_RESUME_BACKGROUND_RC" == 12 ]]
+[[ "$(cat "$PERMISSION_RESUME_BACKGROUND_STATE/stage")" == done ]]
+[[ "$(cat "$PERMISSION_RESUME_BACKGROUND_STATE/failure_reason")" == claude_history_permission_denied ]]
+[[ ! -e "$PERMISSION_RESUME_BACKGROUND_STATE/background_pid" ]]
+cp "$REVIEW_STATE/claude_config_dir" "$PERMISSION_RESUME_BACKGROUND_STATE/claude_config_dir"
+cp "$REVIEW_STATE/claude_config_dir_explicit" "$PERMISSION_RESUME_BACKGROUND_STATE/claude_config_dir_explicit"
+cp "$REVIEW_STATE/claude_history_root" "$PERMISSION_RESUME_BACKGROUND_STATE/claude_history_root"
+cp "$REVIEW_STATE/claude_history_path" "$PERMISSION_RESUME_BACKGROUND_STATE/claude_history_path"
+bash "$SCRIPT_DIR/claude-review.sh" resume-background "$PERMISSION_RESUME_BACKGROUND_STATE" "$DELTA" >/dev/null
+for _ in {1..100}; do
+  [[ "$(cat "$PERMISSION_RESUME_BACKGROUND_STATE/stage" 2>/dev/null || true)" == done ]] && break
+  sleep 0.02
+done
+[[ "$(cat "$PERMISSION_RESUME_BACKGROUND_STATE/stage")" == done ]]
+[[ ! -e "$PERMISSION_RESUME_BACKGROUND_STATE/claude_history_permission_required" ]]
+[[ ! -e "$PERMISSION_RESUME_BACKGROUND_STATE/failure_reason" ]]
+
+# Explicit network retry also preserves its blocked state while history
+# permission is unavailable, then recovers on the same session.
+PERMISSION_RETRY_STATE="$(luna_primary_engineer_new_review_dir)"
+for metadata in packet_path session_id cwd handoff_mode; do cp "$REVIEW_STATE/$metadata" "$PERMISSION_RETRY_STATE/$metadata"; done
+cp "$REVIEW_STATE/result.txt" "$PERMISSION_RETRY_STATE/result.txt"
+printf 'blocked\n' > "$PERMISSION_RETRY_STATE/stage"
+printf 'network\n' > "$PERMISSION_RETRY_STATE/blocked_reason"
+printf '%s\n' "$HISTORY_PERMISSION_TARGET" > "$PERMISSION_RETRY_STATE/claude_config_dir"
+printf '1\n' > "$PERMISSION_RETRY_STATE/claude_config_dir_explicit"
+printf '%s\n' "$HISTORY_PERMISSION_TARGET/projects" > "$PERMISSION_RETRY_STATE/claude_history_root"
+if CLAUDE_CONFIG_DIR="$HISTORY_PERMISSION_TARGET" bash "$SCRIPT_DIR/claude-review.sh" retry "$PERMISSION_RETRY_STATE" >/dev/null 2>"$TEST_INPUT/retry-permission-error.log"; then
+  echo "FAIL: retry permission denial unexpectedly launched" >&2
+  exit 1
+else
+  PERMISSION_RETRY_RC=$?
+fi
+[[ "$PERMISSION_RETRY_RC" == 12 ]]
+[[ "$(cat "$PERMISSION_RETRY_STATE/stage")" == blocked ]]
+[[ "$(cat "$PERMISSION_RETRY_STATE/failure_reason")" == claude_history_permission_denied ]]
+[[ ! -e "$PERMISSION_RETRY_STATE/network-retry-1" ]]
+cp "$REVIEW_STATE/claude_config_dir" "$PERMISSION_RETRY_STATE/claude_config_dir"
+cp "$REVIEW_STATE/claude_config_dir_explicit" "$PERMISSION_RETRY_STATE/claude_config_dir_explicit"
+cp "$REVIEW_STATE/claude_history_root" "$PERMISSION_RETRY_STATE/claude_history_root"
+cp "$REVIEW_STATE/claude_history_path" "$PERMISSION_RETRY_STATE/claude_history_path"
+bash "$SCRIPT_DIR/claude-review.sh" retry "$PERMISSION_RETRY_STATE" >/dev/null
+[[ "$(cat "$PERMISSION_RETRY_STATE/stage")" == done ]]
+[[ -d "$PERMISSION_RETRY_STATE/network-retry-1" ]]
+[[ ! -e "$PERMISSION_RETRY_STATE/claude_history_permission_required" ]]
+
+# A returned result is not resumable after its history file disappears; the
+# wrapper must stop before creating a rereview attempt.
+MISSING_HISTORY_STATE="$(luna_primary_engineer_new_review_dir)"
+bash "$SCRIPT_DIR/claude-review.sh" start "$PACKET" "$MISSING_HISTORY_STATE" missing-history >/dev/null
+rm -f "$(cat "$MISSING_HISTORY_STATE/claude_history_path")"
+if bash "$SCRIPT_DIR/claude-review.sh" resume "$MISSING_HISTORY_STATE" "$DELTA" >/dev/null 2>"$TEST_INPUT/missing-history-error.log"; then
+  echo "FAIL: missing Claude history allowed a resume" >&2
+  exit 1
+else
+  MISSING_HISTORY_RC=$?
+fi
+[[ "$MISSING_HISTORY_RC" == 12 ]]
+[[ "$(cat "$MISSING_HISTORY_STATE/stage")" == failed ]]
+[[ "$(cat "$MISSING_HISTORY_STATE/failure_reason")" == claude_session_history_missing ]]
+[[ "$(cat "$MISSING_HISTORY_STATE/user_confirmation_required")" == 1 ]]
+[[ ! -e "$MISSING_HISTORY_STATE/rereview-1" ]]
+grep -Fq 'CLAUDE_HISTORY_PERMISSION_REQUIRED=0' "$TEST_INPUT/missing-history-error.log"
 
 BUNDLE_STATE="$(luna_primary_engineer_new_review_dir)"
 bash "$SCRIPT_DIR/claude-review.sh" start "$REVIEW_BUNDLE" "$BUNDLE_STATE" smoke-bundle >/dev/null
@@ -938,8 +1205,10 @@ FALLBACK_AGENT="$SCRIPT_DIR/../codex-agents/luna_reviewer.toml"
 for marker in LUNA_CLAUDE_PREFLIGHT_FALLBACK CLAUDE_NOT_LAUNCHED; do
   grep -Fq -- "$marker" "$FALLBACK_AGENT"
 done
+grep -Fq -- 'CLAUDE_HISTORY_PERMISSION_REQUIRED=1' "$FALLBACK_AGENT"
 grep -Fq -- 'never invoke `luna_reviewer`' "$SCRIPT_DIR/../SKILL.md"
 
-grep -Fq 'allow_implicit_invocation: false' "$SCRIPT_DIR/../agents/openai.yaml"
+grep -Fq 'allow_implicit_invocation: true' "$SCRIPT_DIR/../agents/openai.yaml"
+! grep -Fq 'allow_implicit_invocation: false' "$SCRIPT_DIR/../agents/openai.yaml"
 
-echo "PASS: designated-file result, shared review template, visible format mismatch and raw artifact, PID state, process-loss confirmation, safe handoff, sticky review, dual/panel recovery guards, implicit-invocation policy, and static guards"
+echo "PASS: designated-file result, shared review template, visible format mismatch and raw artifact, Claude history preflight/verification, PID state, process-loss confirmation, safe handoff, sticky review, dual/panel recovery guards, implicit-invocation policy, and static guards"

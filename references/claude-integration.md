@@ -125,6 +125,50 @@ precedence over generic timeout text. The latter is stored as
 chooses a next step. `resume` and `resume-background` refuse a known-lost
 session with exit code 10, so the approved recovery is a new `start`.
 
+## Persistent history permission and verification
+
+Ordinary `start`, `start-background`, `retry`, `resume`, and
+`resume-background` calls use a persistent Claude conversation. Claude Code
+normally stores that history below `~/.claude/projects`, or below
+`$CLAUDE_CONFIG_DIR/projects` when the variable is set. Codex's normal
+`workspace-write` sandbox can permit writes to the repository while refusing
+that path. A session ID in Claude's response is not enough for `--resume`.
+When `CLAUDE_CONFIG_DIR` is unset, the wrapper uses the default `.claude`
+directory only to inspect and verify `projects`; it leaves the variable unset
+when launching Claude so Claude Code retains its native `~/.claude.json`
+configuration behavior. An explicit `CLAUDE_CONFIG_DIR` is saved and restored
+for later attempts.
+
+Before an ordinary persistent launch, the wrapper creates the history root and
+writes/removes a disposable marker. If this fails it prints
+`CLAUDE_HISTORY_PERMISSION_REQUIRED=1` and exits before starting Claude. Rerun
+the same command with filesystem execution permission escalation. This is
+separate from network escalation: a real Opus call may need both filesystem
+and Anthropic API access (`require_escalated` in the Codex command runner).
+Do not fall back, retry, or start another review
+automatically because of this preflight failure. The requested state directory
+remains empty so it can be reused after permission is granted.
+
+After a persistent call returns a valid result, the wrapper searches the
+configured history root for the exact session ID and stores the path in
+`claude_history_path`. If no history file is found, it refuses to adopt the
+result as resumable and records
+`failure_reason=claude_session_history_not_saved` with
+`USER_CONFIRMATION_REQUIRED=1`. Before a retry or same-session re-review, it
+checks the recorded path again; a missing file records
+`failure_reason=claude_session_history_missing`, creates no new attempt, and
+requires explicit recovery. If write access is lost before a retry or resume,
+the state records `failure_reason=claude_history_permission_denied`, requires
+confirmation, and starts no Claude process while preserving the prior `done`
+or `blocked` stage so the same command can be rerun after permission is
+restored. `status` displays `CLAUDE_CONFIG_DIR`,
+`CLAUDE_CONFIG_DIR_EXPLICIT`, `CLAUDE_HISTORY_ROOT`, `CLAUDE_HISTORY_PATH`,
+`CLAUDE_HISTORY_VERIFIED`, and `CLAUDE_HISTORY_PERMISSION_REQUIRED`. A
+preserved `done` state also displays `RECOVERY_PENDING=1`, returns status code
+12, and rejects `collect` until the same recovery succeeds. Dual and panel
+calls use
+`--no-session-persistence` and intentionally skip this check.
+
 In a network-restricted Codex sandbox, real Opus calls may require escalating
 the command to network-enabled execution. Obtain that authorization before
 launch when required. Successful `claude auth status` or `claude doctor`

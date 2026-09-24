@@ -261,6 +261,196 @@ luna_primary_engineer_require_fresh_state_tree() {
   luna_primary_engineer_require_empty_state "$1" "state tree"
 }
 
+# Ordinary review/resume calls rely on Claude Code's persistent conversation
+# history.  The Codex workspace-write sandbox can allow writes below the
+# repository while denying writes to ~/.claude/projects, so a returned session
+# ID alone is not evidence that --resume will work.  Keep the config location
+# stable across start, retry, and resume and make the permission boundary
+# explicit before launching Claude.
+luna_primary_engineer_claude_config_dir() {
+  local config_dir="${CLAUDE_CONFIG_DIR:-${HOME:-$PWD}/.claude}"
+  if [[ "$config_dir" != /* ]]; then
+    config_dir="$PWD/$config_dir"
+  fi
+  printf '%s\n' "$config_dir"
+}
+
+luna_primary_engineer_check_claude_history_permission() {
+  local config_dir="$1" history_root marker
+  history_root="$config_dir/projects"
+  if ! mkdir -p "$history_root" 2>/dev/null; then
+    echo "ERROR: Claude persistent history directory is not writable: $history_root" >&2
+    echo "ERROR: run the persistent review command with filesystem execution permission escalation; do not launch it in ordinary workspace-write sandbox mode." >&2
+    printf 'CLAUDE_CONFIG_DIR=%s\nCLAUDE_HISTORY_ROOT=%s\nCLAUDE_HISTORY_PERMISSION_REQUIRED=1\n' \
+      "$config_dir" "$history_root" >&2
+    return 12
+  fi
+  marker="$history_root/.luna-primary-engineer-write-test-$$-${RANDOM:-0}"
+  if ! (umask 077; printf '%s\n' 'luna-primary-engineer history write test' > "$marker") 2>/dev/null; then
+    echo "ERROR: Claude persistent history directory is not writable: $history_root" >&2
+    echo "ERROR: run the persistent review command with filesystem execution permission escalation; do not launch it in ordinary workspace-write sandbox mode." >&2
+    printf 'CLAUDE_CONFIG_DIR=%s\nCLAUDE_HISTORY_ROOT=%s\nCLAUDE_HISTORY_PERMISSION_REQUIRED=1\n' \
+      "$config_dir" "$history_root" >&2
+    return 12
+  fi
+  if ! rm -f "$marker"; then
+    echo "ERROR: Claude history permission check could not clean its own marker: $marker" >&2
+    printf 'CLAUDE_CONFIG_DIR=%s\nCLAUDE_HISTORY_ROOT=%s\nCLAUDE_HISTORY_PERMISSION_REQUIRED=1\n' \
+      "$config_dir" "$history_root" >&2
+    return 12
+  fi
+}
+
+luna_primary_engineer_export_saved_claude_config_dir() {
+  local state_dir="$1" config_dir explicit
+  config_dir="$(cat "$state_dir/claude_config_dir" 2>/dev/null || true)"
+  explicit="$(cat "$state_dir/claude_config_dir_explicit" 2>/dev/null || true)"
+  case "$explicit" in
+    1)
+      [[ -n "$config_dir" ]] && export CLAUDE_CONFIG_DIR="$config_dir"
+      ;;
+    0)
+      # Claude Code's native default uses ~/.claude.json together with
+      # ~/.claude/projects. Do not replace that configuration with the
+      # similarly named .claude directory unless the caller explicitly set
+      # CLAUDE_CONFIG_DIR at review start.
+      unset CLAUDE_CONFIG_DIR
+      ;;
+    *)
+      # States created before this marker existed already launched with the
+      # saved override. Preserve that legacy behavior for resumability.
+      [[ -n "$config_dir" ]] && export CLAUDE_CONFIG_DIR="$config_dir"
+      ;;
+  esac
+  return 0
+}
+
+luna_primary_engineer_check_saved_claude_history_permission() {
+  local state_dir="$1" config_dir
+  luna_primary_engineer_export_saved_claude_config_dir "$state_dir"
+  config_dir="$(cat "$state_dir/claude_config_dir" 2>/dev/null || true)"
+  [[ -n "$config_dir" ]] || config_dir="$(luna_primary_engineer_claude_config_dir)"
+  luna_primary_engineer_check_claude_history_permission "$config_dir"
+}
+
+luna_primary_engineer_find_claude_history() {
+  local history_root="$1" session_id="$2" candidate
+  [[ -d "$history_root" ]] || return 1
+  # Claude Code stores one JSONL transcript per session. Match only the
+  # session-ID basename (case-insensitively); grepping every transcript can
+  # mistake a UUID quoted in an unrelated conversation for the target.
+  candidate="$(find "$history_root" -type f -iname "$session_id.jsonl" -print -quit 2>/dev/null || true)"
+  if [[ -n "$candidate" ]]; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+  candidate="$(find "$history_root" -type f -iname "$session_id" -print -quit 2>/dev/null || true)"
+  [[ -n "$candidate" ]] || return 1
+  printf '%s\n' "$candidate"
+}
+
+luna_primary_engineer_claude_history_fingerprint() {
+  local history_path="$1"
+  [[ -f "$history_path" ]] || return 1
+  # cksum is available on macOS and common Unix hosts and catches an append
+  # even when two turns finish within the same filesystem timestamp tick.
+  cksum "$history_path" 2>/dev/null
+}
+
+luna_primary_engineer_record_claude_history_snapshot() {
+  local state_dir="$1" attempt_dir history_path fingerprint
+  attempt_dir="$2"
+  history_path="$(cat "$state_dir/claude_history_path" 2>/dev/null || true)"
+  [[ -n "$history_path" && -f "$history_path" ]] || return 0
+  fingerprint="$(luna_primary_engineer_claude_history_fingerprint "$history_path" || true)"
+  [[ -n "$fingerprint" ]] || return 0
+  printf '%s\n' "$history_path" > "$attempt_dir/history_before_path"
+  printf '%s\n' "$fingerprint" > "$attempt_dir/history_before_fingerprint"
+}
+
+# Verify the actual history file, not just the session ID returned by Claude.
+# A short poll tolerates a final asynchronous flush after the CLI exits while
+# keeping a missing-history diagnosis deterministic.
+luna_primary_engineer_verify_claude_history() {
+  local state_dir="$1" session_id="$2" attempt_dir="${3:-}" permission_required="${4:-0}" config_dir history_root history_path recorded_path config_dir_explicit
+  local before_fingerprint current_fingerprint require_history_update=0
+  local attempts="${LUNA_PRIMARY_ENGINEER_HISTORY_VERIFY_ATTEMPTS:-20}"
+  config_dir="$(cat "$state_dir/claude_config_dir" 2>/dev/null || true)"
+  [[ -n "$config_dir" ]] || config_dir="$(luna_primary_engineer_claude_config_dir)"
+  config_dir_explicit="$(cat "$state_dir/claude_config_dir_explicit" 2>/dev/null || true)"
+  if [[ "$config_dir_explicit" != 0 && "$config_dir_explicit" != 1 ]]; then
+    if [[ -n "${CLAUDE_CONFIG_DIR:-}" ]]; then
+      config_dir_explicit=1
+    else
+      config_dir_explicit=0
+    fi
+  fi
+  history_root="$(cat "$state_dir/claude_history_root" 2>/dev/null || true)"
+  [[ -n "$history_root" ]] || history_root="$config_dir/projects"
+  [[ "$session_id" =~ ^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$ ]] || {
+    echo "ERROR: cannot verify Claude history because the session ID is invalid: ${session_id:-missing}" >&2
+    return 12
+  }
+  [[ "$attempts" =~ ^[1-9][0-9]*$ ]] || attempts=20
+  recorded_path="$(cat "$state_dir/claude_history_path" 2>/dev/null || true)"
+  if [[ -n "$attempt_dir" && -s "$attempt_dir/history_before_fingerprint" ]]; then
+    before_fingerprint="$(cat "$attempt_dir/history_before_fingerprint")"
+    require_history_update=1
+  fi
+  while (( attempts > 0 )); do
+    history_path=""
+    if [[ -n "$recorded_path" && -f "$recorded_path" && "$recorded_path" == "$history_root/"* ]]; then
+      history_path="$recorded_path"
+    else
+      history_path="$(luna_primary_engineer_find_claude_history "$history_root" "$session_id" 2>/dev/null || true)"
+    fi
+    if [[ -n "$history_path" ]]; then
+      if (( require_history_update == 1 )); then
+        current_fingerprint="$(luna_primary_engineer_claude_history_fingerprint "$history_path" || true)"
+        if [[ -z "$current_fingerprint" || "$current_fingerprint" == "$before_fingerprint" ]]; then
+          history_path=""
+        fi
+      fi
+    fi
+    if [[ -n "$history_path" ]]; then
+      printf '%s\n' "$config_dir" > "$state_dir/claude_config_dir"
+      printf '%s\n' "$config_dir_explicit" > "$state_dir/claude_config_dir_explicit"
+      printf '%s\n' "$history_root" > "$state_dir/claude_history_root"
+      printf '%s\n' "$history_path" > "$state_dir/claude_history_path"
+      printf '1\n' > "$state_dir/claude_history_verified"
+      printf '0\n' > "$state_dir/claude_history_permission_required"
+      return 0
+    fi
+    attempts=$((attempts - 1))
+    (( attempts > 0 )) && sleep 0.1
+  done
+  echo "ERROR: Claude returned a session result, but no persistent history file for session $session_id was found under $history_root." >&2
+  echo "ERROR: the session cannot be resumed safely. Run the persistent review with filesystem execution permission escalation and obtain explicit approval before starting another Opus review." >&2
+  printf 'CLAUDE_CONFIG_DIR=%s\nCLAUDE_HISTORY_ROOT=%s\nCLAUDE_HISTORY_PERMISSION_REQUIRED=%s\n' \
+    "$config_dir" "$history_root" "$permission_required" >&2
+  return 12
+}
+
+luna_primary_engineer_mark_claude_history_failure() {
+  local state_dir="$1" reason="$2" preserve_stage="${3:-0}"
+  if [[ "$preserve_stage" != 1 ]]; then
+    printf 'failed\n' > "$state_dir/stage"
+  fi
+  luna_primary_engineer_require_user_confirmation "$state_dir" "$reason"
+  case "$reason" in
+    claude_history_permission_denied|claude_session_history_not_saved)
+      printf '1\n' > "$state_dir/claude_history_permission_required"
+      ;;
+    *)
+      rm -f "$state_dir/claude_history_permission_required"
+      ;;
+  esac
+  if [[ "$reason" == claude_session_history_missing || "$reason" == claude_session_history_not_saved ]]; then
+    printf '0\n' > "$state_dir/claude_history_verified"
+    rm -f "$state_dir/claude_history_path"
+  fi
+}
+
 # Run Claude in the foreground and persist separate diagnostics and exit code.
 # The result file is intentionally not stdout. In `file` mode Claude is given
 # an exact Edit(path) permission rule that scopes the Write tool; in `stdout`
@@ -470,7 +660,8 @@ luna_primary_engineer_require_user_confirmation() {
 
 luna_primary_engineer_clear_user_confirmation() {
   local state_dir="$1"
-  rm -f "$state_dir/failure_reason" "$state_dir/user_confirmation_required"
+  rm -f "$state_dir/failure_reason" "$state_dir/user_confirmation_required" \
+    "$state_dir/claude_history_permission_required"
 }
 
 luna_primary_engineer_capture_repo_scope() {
@@ -531,12 +722,19 @@ luna_primary_engineer_report_technical_failure() {
 luna_primary_engineer_print_state_dir() {
   local state_dir="$1" stage rc reason background_pid background_kind monitor_dir current_round attempt_dir
   local runner_pid claude_pid runner_state claude_state runner_alive claude_alive
-  local dead_state=dead tracking=0 result_ready=0 confirmation process_list_permission_required=0
+  local dead_state=dead tracking=0 result_ready=0 confirmation recovery_pending=0 process_list_permission_required=0
   local failure_reason raw_result_file review_result_present=0 review_format_valid=unknown
+  local claude_config_dir claude_config_dir_explicit claude_history_root claude_history_path claude_history_verified claude_history_permission_required
   [[ -d "$state_dir" ]] || { echo "ERROR: missing state directory: $state_dir" >&2; return 2; }
   stage="$(cat "$state_dir/stage" 2>/dev/null || printf 'unknown')"
   rc="$(cat "$state_dir/run_exit_code" 2>/dev/null || printf '')"
   reason="$(cat "$state_dir/blocked_reason" 2>/dev/null || printf '')"
+  claude_config_dir="$(cat "$state_dir/claude_config_dir" 2>/dev/null || printf '')"
+  claude_config_dir_explicit="$(cat "$state_dir/claude_config_dir_explicit" 2>/dev/null || printf 'unknown')"
+  claude_history_root="$(cat "$state_dir/claude_history_root" 2>/dev/null || printf '')"
+  claude_history_path="$(cat "$state_dir/claude_history_path" 2>/dev/null || printf '')"
+  claude_history_verified="$(cat "$state_dir/claude_history_verified" 2>/dev/null || printf '0')"
+  claude_history_permission_required="$(cat "$state_dir/claude_history_permission_required" 2>/dev/null || printf '0')"
   background_pid="$(cat "$state_dir/background_pid" 2>/dev/null || printf '')"
   background_kind="$(cat "$state_dir/background_kind" 2>/dev/null || printf '')"
   monitor_dir="$state_dir"
@@ -581,6 +779,9 @@ luna_primary_engineer_print_state_dir() {
 
   confirmation="$(cat "$state_dir/user_confirmation_required" 2>/dev/null || printf '0')"
   failure_reason="$(cat "$state_dir/failure_reason" 2>/dev/null || printf '')"
+  if [[ "$stage" == done && "$confirmation" == 1 ]]; then
+    recovery_pending=1
+  fi
   raw_result_file=""
   if [[ -n "$attempt_dir" ]]; then
     raw_result_file="$attempt_dir/reviewer-result.md"
@@ -593,16 +794,21 @@ luna_primary_engineer_print_state_dir() {
       fi
     fi
   fi
-  printf 'STATE=%s\nEXIT_CODE=%s\nBLOCKED_REASON=%s\nFAILURE_REASON=%s\nUSER_CONFIRMATION_REQUIRED=%s\n' \
-    "$stage" "$rc" "$reason" "$failure_reason" "$confirmation"
-  if [[ "$failure_reason" == review_returned_invalid_format ]]; then
+  printf 'STATE=%s\nEXIT_CODE=%s\nBLOCKED_REASON=%s\nFAILURE_REASON=%s\nUSER_CONFIRMATION_REQUIRED=%s\nRECOVERY_PENDING=%s\n' \
+    "$stage" "$rc" "$reason" "$failure_reason" "$confirmation" "$recovery_pending"
+  printf 'CLAUDE_CONFIG_DIR=%s\nCLAUDE_CONFIG_DIR_EXPLICIT=%s\nCLAUDE_HISTORY_ROOT=%s\nCLAUDE_HISTORY_PATH=%s\nCLAUDE_HISTORY_VERIFIED=%s\nCLAUDE_HISTORY_PERMISSION_REQUIRED=%s\n' \
+    "$claude_config_dir" "$claude_config_dir_explicit" "$claude_history_root" "$claude_history_path" "$claude_history_verified" "$claude_history_permission_required"
+  if [[ "$failure_reason" == review_returned_invalid_format || "$failure_reason" == claude_session_history_not_saved ]]; then
     printf 'REVIEW_RESULT_PRESENT=%s\nREVIEW_FORMAT_VALID=%s\nRAW_REVIEW_RESULT_PATH=%s\n' \
       "$review_result_present" "$review_format_valid" "$raw_result_file"
   fi
   printf 'BACKGROUND_PID=%s\nRUNNER_PID=%s\nRUNNER_ALIVE=%s\nCLAUDE_PID=%s\nCLAUDE_ALIVE=%s\nPROCESS_LIST_PERMISSION_REQUIRED=%s\nSTATE_DIR=%s\n' \
     "$background_pid" "$runner_pid" "$runner_alive" "$claude_pid" "$claude_alive" "$process_list_permission_required" "$state_dir"
   case "$stage" in
-    done) return 0 ;;
+    done)
+      (( recovery_pending == 1 )) && return 12
+      return 0
+      ;;
     running|queued|seed_running|branches_running) return 10 ;;
     blocked) return 11 ;;
     failed) return 12 ;;

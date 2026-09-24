@@ -1,5 +1,5 @@
 Luna Primary Engineer v6.8.0
-- Invocation: allow_implicit_invocation=false; use only when explicitly selected
+- Invocation: allow_implicit_invocation=true; available for implicit selection when relevant
 - Primary: Luna Max/Fast + Ponytail FULL
 - Ordinary review: one Claude Opus 5.5 synchronous reviewer with a persisted session, xhigh effort, read-only implementation boundary
 - Claude model: explicit `claude-opus-5-5` by default; `LUNA_PRIMARY_ENGINEER_CLAUDE_MODEL` is an intentional override
@@ -12,6 +12,7 @@ Luna Primary Engineer v6.8.0
 - Lifecycle: foreground start/resume; explicit wrapper background/status forms; runner/Claude PID tracking; launched Opus processes are never terminated
 - Retry discipline: technical and process-loss reruns require approval and never auto-launch; ordinary risk-selected fix re-review does not require extra approval
 - Network: Codex sandbox execution may need explicit escalation for Anthropic API access before an Opus launch
+- Persistent history: ordinary start/retry/resume requires filesystem write permission for ~/.claude/projects (or $CLAUDE_CONFIG_DIR/projects), preflights it, and verifies the exact session history file before allowing resume
 - Permission discipline: dontAsk + permission-prompts none + Read/Glob/Grep + Write scoped by exact absolute Edit(//path) only; generic Edit/Bash/notebook/MCP unavailable
 - Verification: bash scripts/self-test.sh covers designated-file success, PID state, process-loss confirmation, safe handoff, contract failures, sticky review, network retry, dual, panel, and static guards
 - Dual high-risk review: neutral foreground Opus seed -> two blind independent foreground reviewers

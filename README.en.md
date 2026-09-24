@@ -89,6 +89,10 @@ After fixes, Luna evaluates finding importance, fix scope, and regression risk. 
 
 Reviews can take several minutes. Claude API and stream timeouts default to 10 minutes. The wrapper validates a designated result file rather than trusting Claude's stdout; stdout and stderr are retained separately for diagnostics, so an empty stdout can still be a successful review. Review state is stored under `tmp/luna-primary-engineer/reviews/` inside the repository.
 
+Ordinary `start`, `retry`, and `resume` calls need Claude's persistent conversation history under `~/.claude/projects` (or `$CLAUDE_CONFIG_DIR/projects`). The normal Codex `workspace-write` sandbox can allow the repository result file while denying that history location, so the wrapper checks write access before launch and verifies the exact session-history file after a successful result. If it reports `CLAUDE_HISTORY_PERMISSION_REQUIRED=1`, Claude has not been launched: rerun the same command with filesystem execution permission escalation. Anthropic API network escalation may be required separately. A missing history after a valid response is recorded as `claude_session_history_not_saved`; a missing history before resume is `claude_session_history_missing`. Both require explicit recovery and never trigger an automatic retry or fallback. Dual and panel calls intentionally use non-persistent sessions and skip this check.
+When `CLAUDE_CONFIG_DIR` is unset, the wrapper resolves `~/.claude/projects` for inspection but leaves the variable unset when launching Claude, preserving Claude Code's native `~/.claude.json` configuration. An explicitly supplied `CLAUDE_CONFIG_DIR` is stored and reused.
+If history permission is denied immediately before a retry or resume, Claude is not launched; the completed or network-blocked stage is preserved and the state requires confirmation so the same command can be rerun after permission is restored.
+
 The legacy single packet file remains supported. To keep a reviewer-specific prompt in the reproducible state, pass an input directory containing `review-packet.md` and optional `review-prompt.md` (`prompt.md` is accepted as an alias). The wrapper copies both into a newly-created empty state directory; do not pre-populate the state directory. Existing state data remains protected and non-empty state directories are rejected. Bundle members must be non-empty regular files and must not be symlinks.
 
 Use `review-prompt.md` freely to set the review focus and priorities. The skill supplies the output format from one shared template and validates against that definition. If Claude returns review text in another format, `status` identifies the mismatch and gives the raw result path. The wrapper does not adopt it or start another Opus 5.5 call automatically.
@@ -128,3 +132,7 @@ bash scripts/claude-review.sh retry STATE_DIR
 ```
 
 Switching to an interactive TTY or the Claude daemon does not remove an execution environment's network restriction.
+
+### `No conversation found`
+
+This occurs when the initial result was saved but Claude could not write its session history under `~/.claude/projects`, so `--resume` has no conversation to find. Do not start another Opus call automatically. Check for `CLAUDE_HISTORY_PERMISSION_REQUIRED=1` and the `CLAUDE_HISTORY_*` fields from `status`. If permission is missing, rerun the initial persistent review in an execution environment with filesystem escalation (the Codex tool equivalent is `require_escalated`). An existing state marked `claude_session_history_missing` or `claude_session_not_found` needs user approval and a new `start` state.

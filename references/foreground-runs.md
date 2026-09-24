@@ -14,7 +14,9 @@ queued/running
 running/queued state to failed when all tracked processes are gone without an
 adopted result, but it never starts a retry.
 `collect` is valid only for `stage=done` and validates the adopted
-`result.txt` again.
+`result.txt` again. A done state with `RECOVERY_PENDING=1` has a technical
+recovery awaiting the same explicit command; `status` returns 12 and
+`collect` refuses the old result until recovery succeeds.
 
 ## Workspace and state
 

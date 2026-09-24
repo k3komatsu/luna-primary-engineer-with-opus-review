@@ -93,6 +93,7 @@ if command -v claude >/dev/null 2>&1; then
   if claude auth status >/dev/null 2>&1; then
     echo "OK   Claude Code auth status succeeds"
   echo "INFO Auth success does not prove Anthropic API reachability; Codex sandbox execution may require explicit network escalation before an Opus launch"
+  echo "INFO Persistent start/resume also require filesystem execution permission for ${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/projects; the review wrapper preflights and verifies this path"
   else
     echo "WARN Claude Code installed but auth status failed; fallback Luna review will be used in auto mode"
   fi

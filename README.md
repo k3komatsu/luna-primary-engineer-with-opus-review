@@ -89,6 +89,10 @@ Ponytailは、必要な変更だけに集中し、不要な抽象化や依存を
 
 レビューには数分かかることがあります。ClaudeのAPI・ストリーム待機時間は既定で10分です。レビュー結果はClaudeのstdoutではなく、指定した結果ファイルを検証して採用します。stdout/stderrは診断用に別保存されるため、stdoutが空でも完全な結果ファイルがあれば成功します。レビュー状態はリポジトリ内の`tmp/luna-primary-engineer/reviews/`に保存されます。
 
+通常の`start`・`retry`・`resume`は、再開に必要なClaude履歴を既定の`~/.claude/projects`（`CLAUDE_CONFIG_DIR`設定時はその`projects`）へ保存します。Codexの通常の`workspace-write` sandboxではリポジトリへの結果書き込みだけ成功して履歴保存が拒否されることがあるため、ラッパーは起動前に履歴ディレクトリへの一時書き込みを検査し、成功後もsession IDに対応する履歴ファイルを検証します。`CLAUDE_HISTORY_PERMISSION_REQUIRED=1`が出た場合はClaudeを起動せず、ファイルシステムの実行権限を昇格して同じコマンドを再実行してください。Anthropic APIのネットワーク権限昇格は別途必要になる場合があります。履歴が保存されなかった場合は`claude_session_history_not_saved`、再開前に消失していた場合は`claude_session_history_missing`としてユーザー確認を要求し、自動再実行しません。dual/panelは意図的に非永続セッションなのでこの履歴検査の対象外です。
+`CLAUDE_CONFIG_DIR`を指定しない場合は、検査対象だけを`~/.claude/projects`に解決し、Claude起動時には変数を未設定のままにして標準の`~/.claude.json`設定を維持します。明示指定した場合だけ、その設定を状態に保存して再利用します。
+再開・retryの直前に履歴権限が拒否された場合は、Claudeを起動せず、完了済みまたはネットワーク待ちのstageを保持したまま確認必須として記録します。権限を回復したら同じコマンドを再実行できます。
+
 レビューパケットは従来どおり単一ファイルで渡せます。レビュープロンプトも状態に残したい場合は、`review-packet.md`と任意の`review-prompt.md`を含む入力ディレクトリを渡します。スクリプトが両方を空の状態ディレクトリへコピーするため、状態ディレクトリを先に作ってプロンプトを置く必要はありません。既存の状態データを守るため、事前に内容がある状態ディレクトリは引き続き拒否されます。入力バンドルの2ファイルは空でない通常ファイルにし、シンボリックリンクは使用しません。
 
 `review-prompt.md`にはレビューの観点や優先事項を自由に書けます。出力形式はスキルが共通テンプレートからClaudeへ渡し、同じ定義で結果を検証します。形式が違うレビュー本文が返った場合、結果は採用せず、`status`で「本文あり・形式不一致」と元の結果ファイルを確認できます。Opus 5.5を自動で再実行しません。
@@ -128,3 +132,7 @@ bash scripts/claude-review.sh retry STATE_DIR
 ```
 
 対話型TTYやClaude daemonへ切り替えても、実行環境のネットワーク制限は解決しません。
+
+### `No conversation found` になる
+
+初回の結果だけが保存され、`~/.claude/projects`に履歴がない状態で`--resume`すると起きます。新しいOpus呼び出しを自動で始めず、まず`CLAUDE_HISTORY_PERMISSION_REQUIRED=1`の有無と`status`の`CLAUDE_HISTORY_*`項目を確認します。権限不足なら、ファイルシステムの実行権限を昇格した実行環境（Codexツールでは`require_escalated`相当）で初回の永続レビューをやり直してください。`claude_session_history_missing`または`claude_session_not_found`になった既存stateは、ユーザー確認後に新しいstateで`start`します。

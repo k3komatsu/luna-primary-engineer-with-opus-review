@@ -266,6 +266,43 @@ The wrapper defaults API, stream-idle, byte-idle, and first-byte timeouts to
 600000 milliseconds when unset. Longer waiting is allowed, but it does not
 override a network/proxy timeout returned by Claude or an upstream service.
 
+### Persistent Claude history permission
+
+Ordinary `start`, `retry`, `resume`, and their background forms depend on the
+Claude Code conversation history, normally under `~/.claude/projects` (or
+`$CLAUDE_CONFIG_DIR/projects`). When `CLAUDE_CONFIG_DIR` is unset, the wrapper
+uses `~/.claude/projects` for permission and history verification but leaves the
+variable unset so Claude Code keeps its native `~/.claude.json` configuration
+behavior. An explicitly supplied `CLAUDE_CONFIG_DIR` is stored and reused. A
+Codex `workspace-write` sandbox may allow the
+review result under the repository while denying that history write. The
+wrapper therefore checks the directory and writes a short disposable marker
+before launching an ordinary persistent review. If it prints
+`CLAUDE_HISTORY_PERMISSION_REQUIRED=1`, do not launch Claude, use the Luna
+fallback, or retry automatically; rerun the same command with filesystem
+execution permission escalation (`require_escalated` in the Codex command
+runner). Network permission escalation may also be needed for the Anthropic
+API, and is a separate requirement.
+
+After a successful persistent result, the wrapper searches the configured
+history root for the exact session ID and records `claude_history_path` and
+`CLAUDE_HISTORY_VERIFIED=1`. A valid review response without that file becomes
+`failure_reason=claude_session_history_not_saved` and requires user approval
+before another Opus review. Before `retry` or `resume`, the same file is
+checked again; a missing file becomes
+`failure_reason=claude_session_history_missing`, stops before a new attempt is
+created, and requires explicit recovery. If access is lost before a retry or
+resume launch, the state records
+`failure_reason=claude_history_permission_denied`, requires confirmation, and
+starts no Claude process while preserving the prior `done` or `blocked` stage
+so the same command can be rerun after permission is restored. `status`
+exposes the configured directory, whether the config override was explicit,
+the verified path, and `CLAUDE_HISTORY_PERMISSION_REQUIRED`. A preserved
+`done` state exposes `RECOVERY_PENDING=1`, returns status code 12, and refuses
+`collect` until the approved retry/resume recovery succeeds.
+Dual and panel calls intentionally use non-persistent sessions and do not use
+this history check.
+
 ## High-risk dual review
 
 Use only when an independent second opinion has unusually high value:
